@@ -1,13 +1,15 @@
----
+# permissions for end users to edit tensorfusionconnections.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: manager-role
+  labels:
+    app.kubernetes.io/name: tensor-fusion-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: tensorfusionconnection-editor-role
 rules:
 - apiGroups:
   - tensor-fusion.ai.tensor-fusion.ai
   resources:
-  - gpunodes
   - tensorfusionconnections
   verbs:
   - create
@@ -20,16 +22,6 @@ rules:
 - apiGroups:
   - tensor-fusion.ai.tensor-fusion.ai
   resources:
-  - gpunodes/finalizers
-  - tensorfusionconnections/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
-  resources:
-  - gpunodes/status
   - tensorfusionconnections/status
   verbs:
   - get
-  - patch
-  - update

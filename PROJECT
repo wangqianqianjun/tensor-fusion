@@ -7,4 +7,23 @@ layout:
 - go.kubebuilder.io/v4
 projectName: tensor-fusion-operator
 repo: github.com/NexusGPU/tensor-fusion-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: tensor-fusion.ai
+  group: tensor-fusion.ai
+  kind: TensorFusionConnection
+  path: github.com/NexusGPU/tensor-fusion-operator/api/v1
+  version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: tensor-fusion.ai
+  group: tensor-fusion.ai
+  kind: GPUNode
+  path: github.com/NexusGPU/tensor-fusion-operator/api/v1
+  version: v1
 version: "3"
