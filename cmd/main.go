@@ -30,6 +30,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -38,6 +39,8 @@ import (
 
 	tensorfusionaiv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/controller"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/server"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/server/router"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -119,7 +122,8 @@ func main() {
 		// this setup is not recommended for production.
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	kc := ctrl.GetConfigOrDie()
+	mgr, err := ctrl.NewManager(kc, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -168,6 +172,26 @@ func main() {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
+
+	// Initialize and start the HTTP server
+	client, err := client.NewWithWatch(kc, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "failed to create client with watch")
+		os.Exit(1)
+	}
+	connectionRouter, err := router.NewConnectionRouter(ctx, client)
+	if err != nil {
+		setupLog.Error(err, "failed to create connection router")
+		os.Exit(1)
+	}
+	httpServer := server.NewHTTPServer(connectionRouter)
+	go func() {
+		err := httpServer.Run()
+		if err != nil {
+			setupLog.Error(err, "problem running HTTP server")
+			os.Exit(1)
+		}
+	}()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

@@ -1,0 +1,19 @@
+package server
+
+import (
+	"github.com/NexusGPU/tensor-fusion-operator/internal/server/router"
+	"github.com/gin-contrib/gzip"
+	"github.com/gin-gonic/gin"
+)
+
+func NewHTTPServer(
+	cr *router.ConnectionRouter,
+) *gin.Engine {
+	r := gin.New()
+	r.Use(gzip.Gzip(gzip.DefaultCompression))
+	r.Use(gin.Recovery())
+
+	apiGroup := r.Group("/api")
+	apiGroup.GET("/connection", cr.Get)
+	return r
+}
