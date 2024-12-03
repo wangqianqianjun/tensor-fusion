@@ -24,6 +24,7 @@ import (
 type GPUNodeStatus struct {
 	Capacity  Resource `json:"capacity"`
 	Available Resource `json:"available"`
+	Devices   []string `json:"devices"`
 }
 
 // +kubebuilder:object:root=true
