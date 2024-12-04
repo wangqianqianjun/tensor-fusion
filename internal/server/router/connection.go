@@ -19,7 +19,7 @@ type ConnectionRouter struct {
 func NewConnectionRouter(ctx context.Context, client client.WithWatch) (*ConnectionRouter, error) {
 	watcher, err := newConnectionWatcher(ctx, client)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create connection watcher: %w", err)
+		return nil, fmt.Errorf("create connection watcher: %w", err)
 	}
 	return &ConnectionRouter{watcher: watcher}, nil
 }
@@ -66,7 +66,7 @@ func newConnectionWatcher(ctx context.Context, client client.WithWatch) (*connec
 	}
 	watcher, err := cw.client.Watch(ctx, &tfv1.TensorFusionConnectionList{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to watch connections: %w", err)
+		return nil, fmt.Errorf("watch connections: %w", err)
 	}
 	go cw.watchConnections(ctx, watcher)
 	return cw, nil
