@@ -1,4 +1,4 @@
-apiVersion: tensor-fusion.ai.tensor-fusion.ai/v1
+apiVersion: tensor-fusion.ai/v1
 kind: GPUNode
 metadata:
   labels:

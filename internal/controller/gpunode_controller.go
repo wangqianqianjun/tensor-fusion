@@ -36,9 +36,9 @@ type GPUNodeReconciler struct {
 	Scheduler scheduler.Scheduler
 }
 
-// +kubebuilder:rbac:groups=tensor-fusion.ai.tensor-fusion.ai,resources=gpunodes,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=tensor-fusion.ai.tensor-fusion.ai,resources=gpunodes/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=tensor-fusion.ai.tensor-fusion.ai,resources=gpunodes/finalizers,verbs=update
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpunodes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpunodes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpunodes/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

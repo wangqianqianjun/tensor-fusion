@@ -1,5 +1,5 @@
 ## Append samples of your project ##
 resources:
-- tensor-fusion.ai_v1_tensorfusionconnection.yaml
-- tensor-fusion.ai_v1_gpunode.yaml
+- v1_tensorfusionconnection.yaml
+- v1_gpunode.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

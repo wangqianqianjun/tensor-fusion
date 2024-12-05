@@ -5,7 +5,7 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - gpunodes
   - tensorfusionconnections
@@ -18,14 +18,14 @@ rules:
   - update
   - watch
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - gpunodes/finalizers
   - tensorfusionconnections/finalizers
   verbs:
   - update
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - gpunodes/status
   - tensorfusionconnections/status

@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.4
-  name: tensorfusionconnections.tensor-fusion.ai.tensor-fusion.ai
+  name: tensorfusionconnections.tensor-fusion.ai
 spec:
-  group: tensor-fusion.ai.tensor-fusion.ai
+  group: tensor-fusion.ai
   names:
     kind: TensorFusionConnection
     listKind: TensorFusionConnectionList

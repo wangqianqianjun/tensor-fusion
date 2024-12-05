@@ -43,9 +43,9 @@ var (
 	tensorFusionConnectionFinalizer = constants.TensorFusionFinalizer
 )
 
-// +kubebuilder:rbac:groups=tensor-fusion.ai.tensor-fusion.ai,resources=tensorfusionconnections,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=tensor-fusion.ai.tensor-fusion.ai,resources=tensorfusionconnections/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=tensor-fusion.ai.tensor-fusion.ai,resources=tensorfusionconnections/finalizers,verbs=update
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionconnections,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionconnections/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionconnections/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

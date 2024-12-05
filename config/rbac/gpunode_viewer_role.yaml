@@ -8,7 +8,7 @@ metadata:
   name: gpunode-viewer-role
 rules:
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - gpunodes
   verbs:
@@ -16,7 +16,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - gpunodes/status
   verbs:

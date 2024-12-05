@@ -8,7 +8,7 @@ metadata:
   name: tensorfusionconnection-editor-role
 rules:
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - tensorfusionconnections
   verbs:
@@ -20,7 +20,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - tensorfusionconnections/status
   verbs:

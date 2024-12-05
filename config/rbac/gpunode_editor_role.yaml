@@ -8,7 +8,7 @@ metadata:
   name: gpunode-editor-role
 rules:
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - gpunodes
   verbs:
@@ -20,7 +20,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - tensor-fusion.ai.tensor-fusion.ai
+  - tensor-fusion.ai
   resources:
   - gpunodes/status
   verbs:
