@@ -49,6 +49,7 @@ type TensorFusionConnectionStatus struct {
 	Phase         TensorFusionConnectionPhase `json:"phase"`
 	ConnectionURL string                      `json:"connectionURL"`
 	QosClass      string                      `json:"qosClass"`
+	Node          string                      `json:"node,omitempty"`
 }
 
 // +kubebuilder:object:root=true

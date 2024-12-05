@@ -33,6 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
 )
 
 // SetupPodWebhookWithManager registers the webhook for Pod in the manager.
@@ -107,7 +109,7 @@ func parseTFReq(pod *corev1.Pod) []TFReq {
 		containerName := container.Name
 
 		// Check if tensor fusion is enabled for this container
-		enableKey := fmt.Sprintf("tensor-fusion.ai/enable-%s", containerName)
+		enableKey := fmt.Sprintf(constants.EnableContainerAnnotationFormat, containerName)
 		if enableStr, ok := pod.Annotations[enableKey]; !ok || enableStr != "true" {
 			continue
 		}
@@ -117,7 +119,7 @@ func parseTFReq(pod *corev1.Pod) []TFReq {
 		}
 
 		// Parse TFLOPS requirement
-		tflopsKey := fmt.Sprintf("tensor-fusion.ai/tflops-%s", containerName)
+		tflopsKey := fmt.Sprintf(constants.TFLOPSContainerAnnotationFormat, containerName)
 		if tflopsStr, ok := pod.Annotations[tflopsKey]; ok {
 			tflops, err := resource.ParseQuantity(tflopsStr)
 			if err == nil {
@@ -126,7 +128,7 @@ func parseTFReq(pod *corev1.Pod) []TFReq {
 		}
 
 		// Parse VRAM requirement
-		vramKey := fmt.Sprintf("tensor-fusion.ai/vram-%s", containerName)
+		vramKey := fmt.Sprintf(constants.VRAMContainerAnnotationFormat, containerName)
 		if vramStr, ok := pod.Annotations[vramKey]; ok {
 			vram, err := resource.ParseQuantity(vramStr)
 			if err == nil {

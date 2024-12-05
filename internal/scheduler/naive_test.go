@@ -164,3 +164,83 @@ func TestNaiveScheduler_NodeOperations(t *testing.T) {
 		t.Error("After OnDelete: Schedule() should fail with no nodes")
 	}
 }
+
+func TestNaiveScheduler_Release(t *testing.T) {
+	tests := []struct {
+		name      string
+		node      *tfv1.GPUNode
+		schedule  *tfv1.Resource
+		wantError bool
+	}{
+		{
+			name:      "release non-existent node",
+			node:      createGPUNode("node1", "100", "16Gi"),
+			wantError: true,
+		},
+		{
+			name: "release after scheduling",
+			node: &tfv1.GPUNode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node1",
+				},
+				Status: tfv1.GPUNodeStatus{
+					Capacity: tfv1.Resource{
+						Tflops: resource.MustParse("100"),
+						Vram:   resource.MustParse("16Gi"),
+					},
+					Available: tfv1.Resource{
+						Tflops: resource.MustParse("100"),
+						Vram:   resource.MustParse("16Gi"),
+					},
+				},
+			},
+			schedule: &tfv1.Resource{
+				Tflops: resource.MustParse("50"),
+				Vram:   resource.MustParse("8Gi"),
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewNaiveScheduler()
+
+			if !tt.wantError {
+				// Add the node first
+				s.OnAdd(tt.node)
+
+				// Schedule some resources if needed
+				if tt.schedule != nil {
+					node, err := s.Schedule(*tt.schedule)
+					if err != nil {
+						t.Errorf("Schedule() error = %v", err)
+						return
+					}
+
+					// Verify resources were allocated
+					if node.Status.Available.Tflops.Cmp(resource.MustParse("50")) != 0 ||
+						node.Status.Available.Vram.Cmp(resource.MustParse("8Gi")) != 0 {
+						t.Errorf("Schedule() did not allocate resources correctly")
+						return
+					}
+				}
+			}
+
+			err := s.Release(tt.node)
+			if (err != nil) != tt.wantError {
+				t.Errorf("Release() error = %v, wantError %v", err, tt.wantError)
+				return
+			}
+
+			if !tt.wantError {
+				// Verify resources were restored
+				node := s.nodes[tt.node.Name]
+				if node.Status.Available.Tflops.Cmp(node.Status.Capacity.Tflops) != 0 ||
+					node.Status.Available.Vram.Cmp(node.Status.Capacity.Vram) != 0 {
+					t.Errorf("Release() did not restore resources correctly")
+				}
+			}
+		})
+	}
+}

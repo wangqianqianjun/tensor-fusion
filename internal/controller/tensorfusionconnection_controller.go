@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
 	scheduler "github.com/NexusGPU/tensor-fusion-operator/internal/scheduler"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/worker"
 )
@@ -37,6 +38,10 @@ type TensorFusionConnectionReconciler struct {
 	Scheme    *runtime.Scheme
 	Scheduler scheduler.Scheduler
 }
+
+var (
+	tensorFusionConnectionFinalizer = constants.TensorFusionFinalizer
+)
 
 // +kubebuilder:rbac:groups=tensor-fusion.ai.tensor-fusion.ai,resources=tensorfusionconnections,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=tensor-fusion.ai.tensor-fusion.ai,resources=tensorfusionconnections/status,verbs=get;update;patch
@@ -58,6 +63,35 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
+	// Check if the connection is being deleted
+	if !connection.DeletionTimestamp.IsZero() {
+		// The object is being deleted
+		if containsString(connection.Finalizers, tensorFusionConnectionFinalizer) {
+			// Our finalizer is present, so let's handle our external dependency
+			if err := r.handleDeletion(ctx, connection); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Remove our finalizer from the list and update it
+			connection.Finalizers = removeString(connection.Finalizers, tensorFusionConnectionFinalizer)
+			if err := r.Update(ctx, connection); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		// Our finalizer has finished, so the reconciler can do nothing
+		return ctrl.Result{}, nil
+	}
+
+	// Add finalizer if it's not present
+	if !containsString(connection.Finalizers, tensorFusionConnectionFinalizer) {
+		connection.Finalizers = append(connection.Finalizers, tensorFusionConnectionFinalizer)
+		if err := r.Update(ctx, connection); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Return here as the update will trigger another reconciliation
+		return ctrl.Result{}, nil
+	}
+
 	var node *tfv1.GPUNode
 	// If status is not set or pending, try to schedule
 	if connection.Status.Phase == "" || connection.Status.Phase == tfv1.TensorFusionConnectionPending {
@@ -69,6 +103,7 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 		} else if node != nil {
 			connection.Status.Phase = tfv1.TensorFusionConnectionRunning
 			connection.Status.ConnectionURL = worker.GenerateConnectionURL(node, connection)
+			connection.Status.Node = node.Name // Store the node name for cleanup
 		} else {
 			connection.Status.Phase = tfv1.TensorFusionConnectionPending
 		}
@@ -79,6 +114,50 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// handleDeletion handles cleanup of external dependencies
+func (r *TensorFusionConnectionReconciler) handleDeletion(ctx context.Context, connection *tfv1.TensorFusionConnection) error {
+	if connection.Status.Node == "" {
+		return nil // No node was allocated, nothing to clean up
+	}
+
+	// Get the node
+	node := &tfv1.GPUNode{}
+	if err := r.Get(ctx, client.ObjectKey{Name: connection.Status.Node}, node); err != nil {
+		if errors.IsNotFound(err) {
+			// Node is already gone, nothing to do
+			return nil
+		}
+		return err
+	}
+
+	// Release the resources
+	if err := r.Scheduler.Release(node); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Helper functions to handle finalizers
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+func removeString(slice []string, s string) []string {
+	result := []string{}
+	for _, item := range slice {
+		if item != s {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 func (r *TensorFusionConnectionReconciler) MustUpdateStatus(ctx context.Context, connection *tfv1.TensorFusionConnection, gpuNode *tfv1.GPUNode) error {
