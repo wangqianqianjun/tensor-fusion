@@ -22,6 +22,7 @@ func createGPUNode(name string, tflops, vram string) *tfv1.GPUNode {
 	}
 }
 
+//nolint:unparam
 func createRequest(tflops, vram string) tfv1.Resource {
 	return tfv1.Resource{
 		Tflops: resource.MustParse(tflops),
