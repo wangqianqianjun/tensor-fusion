@@ -91,6 +91,8 @@ spec:
             properties:
               connectionURL:
                 type: string
+              node:
+                type: string
               phase:
                 type: string
               qosClass:

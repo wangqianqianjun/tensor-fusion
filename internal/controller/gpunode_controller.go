@@ -49,17 +49,6 @@ func (r *GPUNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *GPUNodeReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
-	// List all existing GPUNodes and add them to scheduler
-	existingNodes := &tfv1.GPUNodeList{}
-	if err := r.List(ctx, existingNodes); err != nil {
-		return err
-	}
-
-	// Add all existing nodes to scheduler
-	for i := range existingNodes.Items {
-		r.Scheduler.OnAdd(&existingNodes.Items[i])
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&tfv1.GPUNode{}).
 		Named("gpunode").

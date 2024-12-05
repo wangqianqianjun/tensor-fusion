@@ -40,6 +40,7 @@ import (
 	tensorfusionaiv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/controller"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/scheduler"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/server"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/server/router"
 	webhookcorev1 "github.com/NexusGPU/tensor-fusion-operator/internal/webhook/v1"
@@ -158,9 +159,12 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "TensorFusionConnection")
 		os.Exit(1)
 	}
+
+	scheduler := scheduler.NewNaiveScheduler()
 	if err = (&controller.GPUNodeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Scheduler: scheduler,
 	}).SetupWithManager(ctx, mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GPUNode")
 		os.Exit(1)
@@ -173,8 +177,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	// +kubebuilder:scaffold:builder
 
+	// +kubebuilder:scaffold:builder
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
