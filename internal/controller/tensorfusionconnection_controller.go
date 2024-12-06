@@ -129,7 +129,7 @@ func (r *TensorFusionConnectionReconciler) handleDeletion(ctx context.Context, c
 
 	// Get the node
 	node := &tfv1.GPUNode{}
-	if err := r.Get(ctx, client.ObjectKey{Name: connection.Status.Node, Namespace: connection.Namespace}, node); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Name: connection.Status.Node}, node); err != nil {
 		if errors.IsNotFound(err) {
 			// Node is already gone, nothing to do
 			return nil

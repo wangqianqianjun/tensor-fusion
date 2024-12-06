@@ -29,7 +29,7 @@ type GPUNodeStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-
+// +kubebuilder:resource:scope=Cluster
 // GPUNode is the Schema for the gpunodes API.
 type GPUNode struct {
 	metav1.TypeMeta   `json:",inline"`
