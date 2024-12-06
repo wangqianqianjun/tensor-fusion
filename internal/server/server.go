@@ -9,9 +9,11 @@ import (
 func NewHTTPServer(
 	cr *router.ConnectionRouter,
 ) *gin.Engine {
+
 	r := gin.New()
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
 	r.Use(gin.Recovery())
+	r.Use(gin.Logger())
 
 	apiGroup := r.Group("/api")
 	apiGroup.GET("/connection", cr.Get)

@@ -35,6 +35,11 @@ func (cr *ConnectionRouter) Get(ctx *gin.Context) {
 		return
 	}
 
+	if conn.Status.Phase == tfv1.TensorFusionConnectionRunning {
+		ctx.JSON(200, conn.Status.ConnectionURL)
+		return
+	}
+
 	// Subscribe to connection updates
 	ch, cancelFunc := cr.watcher.subscribe(req)
 	defer cancelFunc()
