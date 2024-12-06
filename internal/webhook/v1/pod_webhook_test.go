@@ -26,16 +26,13 @@ import (
 
 var _ = Describe("Pod Webhook", func() {
 	var (
-		obj       *corev1.Pod
-		oldObj    *corev1.Pod
-		defaulter PodCustomDefaulter
+		obj    *corev1.Pod
+		oldObj *corev1.Pod
 	)
 
 	BeforeEach(func() {
 		obj = &corev1.Pod{}
 		oldObj = &corev1.Pod{}
-		defaulter = PodCustomDefaulter{}
-		Expect(defaulter).NotTo(BeNil(), "Expected defaulter to be initialized")
 		Expect(oldObj).NotTo(BeNil(), "Expected oldObj to be initialized")
 		Expect(obj).NotTo(BeNil(), "Expected obj to be initialized")
 		// TODO (user): Add any setup logic common to all tests

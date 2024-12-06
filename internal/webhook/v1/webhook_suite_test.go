@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -117,7 +118,8 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	err = SetupPodWebhookWithManager(mgr)
+	conf := config.NewDefaultConfig()
+	err = SetupPodWebhookWithManager(mgr, &conf.PodMutator)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:webhook
