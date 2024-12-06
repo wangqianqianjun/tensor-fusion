@@ -30,6 +30,5 @@ resources:
   path: k8s.io/api/core/v1
   version: v1
   webhooks:
-    conversion: true
     webhookVersion: v1
 version: "3"
