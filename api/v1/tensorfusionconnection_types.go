@@ -48,7 +48,7 @@ const (
 type TensorFusionConnectionStatus struct {
 	Phase         TensorFusionConnectionPhase `json:"phase"`
 	ConnectionURL string                      `json:"connectionURL"`
-	QosClass      string                      `json:"qosClass"`
+	QosClass      string                      `json:"qosClass,omitempty"`
 	Node          string                      `json:"node,omitempty"`
 }
 

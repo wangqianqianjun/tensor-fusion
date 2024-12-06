@@ -168,14 +168,18 @@ func TestNaiveScheduler_NodeOperations(t *testing.T) {
 
 func TestNaiveScheduler_Release(t *testing.T) {
 	tests := []struct {
-		name      string
-		node      *tfv1.GPUNode
-		schedule  *tfv1.Resource
-		wantError bool
+		name                string
+		node               *tfv1.GPUNode
+		schedule           *tfv1.Resource
+		release            *tfv1.Resource
+		wantError          bool
+		wantRemainingTflops string
+		wantRemainingVram   string
 	}{
 		{
 			name:      "release non-existent node",
 			node:      createGPUNode("node1", "100", "16Gi"),
+			release:   &tfv1.Resource{},
 			wantError: true,
 		},
 		{
@@ -199,7 +203,42 @@ func TestNaiveScheduler_Release(t *testing.T) {
 				Tflops: resource.MustParse("50"),
 				Vram:   resource.MustParse("8Gi"),
 			},
-			wantError: false,
+			release: &tfv1.Resource{
+				Tflops: resource.MustParse("50"),
+				Vram:   resource.MustParse("8Gi"),
+			},
+			wantError:          false,
+			wantRemainingTflops: "100",
+			wantRemainingVram:   "16Gi",
+		},
+		{
+			name: "partial release",
+			node: &tfv1.GPUNode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node1",
+				},
+				Status: tfv1.GPUNodeStatus{
+					Capacity: tfv1.Resource{
+						Tflops: resource.MustParse("100"),
+						Vram:   resource.MustParse("16Gi"),
+					},
+					Available: tfv1.Resource{
+						Tflops: resource.MustParse("100"),
+						Vram:   resource.MustParse("16Gi"),
+					},
+				},
+			},
+			schedule: &tfv1.Resource{
+				Tflops: resource.MustParse("60"),
+				Vram:   resource.MustParse("10Gi"),
+			},
+			release: &tfv1.Resource{
+				Tflops: resource.MustParse("30"),
+				Vram:   resource.MustParse("5Gi"),
+			},
+			wantError:          false,
+			wantRemainingTflops: "70",
+			wantRemainingVram:   "11Gi",
 		},
 	}
 
@@ -220,26 +259,34 @@ func TestNaiveScheduler_Release(t *testing.T) {
 					}
 
 					// Verify resources were allocated
-					if node.Status.Available.Tflops.Cmp(resource.MustParse("50")) != 0 ||
-						node.Status.Available.Vram.Cmp(resource.MustParse("8Gi")) != 0 {
+					expectedTflops := tt.node.Status.Capacity.Tflops.DeepCopy()
+					expectedVram := tt.node.Status.Capacity.Vram.DeepCopy()
+					expectedTflops.Sub(tt.schedule.Tflops)
+					expectedVram.Sub(tt.schedule.Vram)
+					if node.Status.Available.Tflops.Cmp(expectedTflops) != 0 ||
+						node.Status.Available.Vram.Cmp(expectedVram) != 0 {
 						t.Errorf("Schedule() did not allocate resources correctly")
 						return
 					}
 				}
 			}
 
-			err := s.Release(tt.node)
+			err := s.Release(*tt.release, tt.node)
 			if (err != nil) != tt.wantError {
 				t.Errorf("Release() error = %v, wantError %v", err, tt.wantError)
 				return
 			}
 
 			if !tt.wantError {
-				// Verify resources were restored
+				// Verify resources were restored correctly
 				node := s.nodes[tt.node.Name]
-				if node.Status.Available.Tflops.Cmp(node.Status.Capacity.Tflops) != 0 ||
-					node.Status.Available.Vram.Cmp(node.Status.Capacity.Vram) != 0 {
-					t.Errorf("Release() did not restore resources correctly")
+				if node.Status.Available.Tflops.String() != tt.wantRemainingTflops ||
+					node.Status.Available.Vram.String() != tt.wantRemainingVram {
+					t.Errorf("Release() resources incorrect, got tflops=%v vram=%v, want tflops=%v vram=%v",
+						node.Status.Available.Tflops.String(),
+						node.Status.Available.Vram.String(),
+						tt.wantRemainingTflops,
+						tt.wantRemainingVram)
 				}
 			}
 		})

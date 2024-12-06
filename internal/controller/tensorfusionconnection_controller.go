@@ -96,14 +96,16 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 	// If status is not set or pending, try to schedule
 	if connection.Status.Phase == "" || connection.Status.Phase == tfv1.TensorFusionConnectionPending {
 		// Try to get an available node from scheduler
-		node, err := r.Scheduler.Schedule(connection.Spec.Resources.Request)
+		var err error
+		node, err = r.Scheduler.Schedule(connection.Spec.Resources.Request)
 		if err != nil {
-			log.Error(err, "Failed to schedule connection")
+			log.Info(err.Error())
 			connection.Status.Phase = tfv1.TensorFusionConnectionPending
 		} else if node != nil {
 			connection.Status.Phase = tfv1.TensorFusionConnectionRunning
 			connection.Status.ConnectionURL = worker.GenerateConnectionURL(node, connection)
-			connection.Status.Node = node.Name // Store the node name for cleanup
+			// Store the node name for cleanup
+			connection.Status.Node = node.Name
 		} else {
 			connection.Status.Phase = tfv1.TensorFusionConnectionPending
 		}
@@ -113,6 +115,9 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
+	if connection.Status.Phase == tfv1.TensorFusionConnectionPending {
+		return ctrl.Result{RequeueAfter: constants.PendingRequeueDuration}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -124,7 +129,7 @@ func (r *TensorFusionConnectionReconciler) handleDeletion(ctx context.Context, c
 
 	// Get the node
 	node := &tfv1.GPUNode{}
-	if err := r.Get(ctx, client.ObjectKey{Name: connection.Status.Node}, node); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Name: connection.Status.Node, Namespace: connection.Namespace}, node); err != nil {
 		if errors.IsNotFound(err) {
 			// Node is already gone, nothing to do
 			return nil
@@ -133,11 +138,11 @@ func (r *TensorFusionConnectionReconciler) handleDeletion(ctx context.Context, c
 	}
 
 	// Release the resources
-	if err := r.Scheduler.Release(node); err != nil {
+	if err := r.Scheduler.Release(connection.Spec.Resources.Request, node); err != nil {
 		return err
 	}
 
-	return nil
+	return r.MustUpdateStatus(ctx, connection, node)
 }
 
 // Helper functions to handle finalizers
@@ -172,8 +177,7 @@ func (r *TensorFusionConnectionReconciler) MustUpdateStatus(ctx context.Context,
 		}
 
 		// Update the status fields we care about
-		latestConnection.Status.Phase = connection.Status.Phase
-		latestConnection.Status.ConnectionURL = connection.Status.ConnectionURL
+		latestConnection.Status = connection.Status
 
 		// Update the connection status
 		if err := r.Status().Update(ctx, latestConnection); err != nil {

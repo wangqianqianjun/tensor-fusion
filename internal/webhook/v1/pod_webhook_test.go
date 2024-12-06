@@ -17,42 +17,165 @@ limitations under the License.
 package v1
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+
+	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
-	// TODO (user): Add any additional imports if needed
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-var _ = Describe("Pod Webhook", func() {
+var _ = Describe("TensorFusionPodMutator", func() {
 	var (
-		obj    *corev1.Pod
-		oldObj *corev1.Pod
+		mutator *TensorFusionPodMutator
+		ctx     context.Context
+		scheme  *runtime.Scheme
+		decoder admission.Decoder
+		client  client.Client
 	)
 
 	BeforeEach(func() {
-		obj = &corev1.Pod{}
-		oldObj = &corev1.Pod{}
-		Expect(oldObj).NotTo(BeNil(), "Expected oldObj to be initialized")
-		Expect(obj).NotTo(BeNil(), "Expected obj to be initialized")
-		// TODO (user): Add any setup logic common to all tests
+		ctx = context.Background()
+		scheme = runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(tfv1.AddToScheme(scheme)).To(Succeed())
+
+		decoder = admission.NewDecoder(scheme)
+		client = fake.NewClientBuilder().WithScheme(scheme).Build()
+
+		config := config.NewDefaultConfig()
+		mutator = &TensorFusionPodMutator{
+			Client: client,
+			Config: &config.PodMutator,
+		}
+		Expect(mutator.InjectDecoder(decoder)).To(Succeed())
 	})
 
-	AfterEach(func() {
-		// TODO (user): Add any teardown logic common to all tests
+	Context("Handle", func() {
+		It("should successfully mutate a pod with TF requirements", func() {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"tf.nexusgpu.com/tflops": "100",
+						"tf.nexusgpu.com/vram":   "16Gi",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "main",
+							Image: "test-image",
+						},
+					},
+				},
+			}
+
+			podBytes, err := json.Marshal(pod)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Object: runtime.RawExtension{
+						Raw: podBytes,
+					},
+					Operation: admissionv1.Create,
+				},
+			}
+
+			resp := mutator.Handle(ctx, req)
+			Expect(resp.Allowed).To(BeTrue())
+			Expect(resp.Patches).NotTo(BeEmpty())
+
+			// Verify TensorFusionConnection was created
+			tfConnList := &tfv1.TensorFusionConnectionList{}
+			err = client.List(ctx, tfConnList)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tfConnList.Items).To(HaveLen(1))
+		})
+
+		It("should handle pods without TF requirements", func() {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod-no-tf",
+					Namespace: "default",
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "main",
+							Image: "test-image",
+						},
+					},
+				},
+			}
+
+			podBytes, err := json.Marshal(pod)
+			Expect(err).NotTo(HaveOccurred())
+
+			req := admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Object: runtime.RawExtension{
+						Raw: podBytes,
+					},
+					Operation: admissionv1.Create,
+				},
+			}
+
+			resp := mutator.Handle(ctx, req)
+			Expect(resp.Allowed).To(BeTrue())
+			Expect(resp.Patches).To(BeEmpty())
+		})
+
+		It("should handle invalid pod specification", func() {
+			req := admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{
+					Object: runtime.RawExtension{
+						Raw: []byte("invalid json"),
+					},
+					Operation: admissionv1.Create,
+				},
+			}
+
+			resp := mutator.Handle(ctx, req)
+			Expect(resp.Allowed).To(BeFalse())
+			Expect(resp.Result.Code).To(Equal(int32(http.StatusBadRequest)))
+		})
 	})
 
-	Context("When creating Pod under Defaulting Webhook", func() {
-		// TODO (user): Add logic for defaulting webhooks
-		// Example:
-		// It("Should apply defaults when a required field is empty", func() {
-		//     By("simulating a scenario where defaults should be applied")
-		//     obj.SomeFieldWithDefault = ""
-		//     By("calling the Default method to apply defaults")
-		//     defaulter.Default(ctx, obj)
-		//     By("checking that the default values are set")
-		//     Expect(obj.SomeFieldWithDefault).To(Equal("default_value"))
-		// })
-	})
+	Context("parseTFReq", func() {
+		It("should correctly parse TF requirements from pod annotations", func() {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"tf.nexusgpu.com/tflops": "100",
+						"tf.nexusgpu.com/vram":   "16Gi",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "test-container",
+						},
+					},
+				},
+			}
 
+			reqs := parseTFReq(pod)
+			Expect(reqs).To(HaveLen(1))
+			Expect(reqs[0].ContainerName).To(Equal("test-container"))
+			Expect(reqs[0].Tflops.String()).To(Equal("100"))
+			Expect(reqs[0].Vram.String()).To(Equal("16Gi"))
+		})
+	})
 })

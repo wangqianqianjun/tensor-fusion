@@ -60,7 +60,7 @@ func (s *NaiveScheduler) OnDelete(node *tfv1.GPUNode) {
 }
 
 // Release implements Scheduler interface
-func (s *NaiveScheduler) Release(node *tfv1.GPUNode) error {
+func (s *NaiveScheduler) Release(request tfv1.Resource, node *tfv1.GPUNode) error {
 	s.Lock()
 	defer s.Unlock()
 
@@ -69,7 +69,10 @@ func (s *NaiveScheduler) Release(node *tfv1.GPUNode) error {
 		return fmt.Errorf("node %s not found", node.Name)
 	}
 
-	// Reset the node's available resources to its capacity
-	existingNode.Status.Available = existingNode.Status.Capacity
+	// Add back the released resources
+	existingNode.Status.Available.Tflops.Add(request.Tflops)
+	existingNode.Status.Available.Vram.Add(request.Vram)
+	// output the updated node
+	node.Status.Available = existingNode.Status.Available
 	return nil
 }

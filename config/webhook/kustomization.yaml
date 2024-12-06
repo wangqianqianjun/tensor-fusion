@@ -1,6 +1,9 @@
+namespace: tensor-fusion
+
 resources:
 - manifests.yaml
 - service.yaml
 
 configurations:
 - kustomizeconfig.yaml
+

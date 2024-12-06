@@ -152,15 +152,16 @@ func main() {
 
 	ctx := context.Background()
 	config := config.NewDefaultConfig()
+	scheduler := scheduler.NewNaiveScheduler()
 	if err = (&controller.TensorFusionConnectionReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Scheduler: scheduler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TensorFusionConnection")
 		os.Exit(1)
 	}
 
-	scheduler := scheduler.NewNaiveScheduler()
 	if err = (&controller.GPUNodeReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),

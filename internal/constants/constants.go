@@ -1,5 +1,7 @@
 package constants
 
+import "time"
+
 const (
 	// TensorFusionDomain is the domain prefix used for all tensor-fusion.ai related annotations and finalizers
 	TensorFusionDomain = "tensor-fusion.ai"
@@ -12,4 +14,6 @@ const (
 	EnableContainerAnnotationFormat = TensorFusionDomain + "/enable-%s"
 	TFLOPSContainerAnnotationFormat = TensorFusionDomain + "/tflops-%s"
 	VRAMContainerAnnotationFormat   = TensorFusionDomain + "/vram-%s"
+
+	PendingRequeueDuration = time.Second * 3
 )

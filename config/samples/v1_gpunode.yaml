@@ -5,5 +5,13 @@ metadata:
     app.kubernetes.io/name: tensor-fusion-operator
     app.kubernetes.io/managed-by: kustomize
   name: gpunode-sample
-spec:
-  # TODO(user): Add fields here
+  namespace: tensor-fusion
+status:
+  capacity:
+    tflops: '200'
+    vram: 100Gi
+  available:
+    tflops: '200'
+    vram: 100Gi
+  devices: []
+  

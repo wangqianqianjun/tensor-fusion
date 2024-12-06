@@ -5,5 +5,12 @@ metadata:
     app.kubernetes.io/name: tensor-fusion-operator
     app.kubernetes.io/managed-by: kustomize
   name: tensorfusionconnection-sample
+  namespace: tensor-fusion
 spec:
-  # TODO(user): Add fields here
+  resources:
+    limit:
+      tflops: '100'
+      vram: 8Gi
+    request:
+      tflops: '20'
+      vram: 9Gi

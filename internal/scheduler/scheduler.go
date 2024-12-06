@@ -12,7 +12,7 @@ type Scheduler interface {
 	Schedule(request tfv1.Resource) (*tfv1.GPUNode, error)
 
 	// Release frees the allocated resources of a node
-	Release(node *tfv1.GPUNode) error
+	Release(request tfv1.Resource, node *tfv1.GPUNode) error
 
 	// OnAdd is called when a new node is added
 	OnAdd(node *tfv1.GPUNode)

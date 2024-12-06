@@ -100,7 +100,6 @@ spec:
             required:
             - connectionURL
             - phase
-            - qosClass
             type: object
         type: object
     served: true
