@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-20.04
+    outputs:
+      published: ${{ steps.semantic.outputs.new_release_published }}
+      version: ${{ steps.semantic.outputs.new_release_version }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v3.4.1
+        with:
+          semantic_version: 18
+          extra_plugins: |
+            @semantic-release/release-notes-generator@^10
+            @semantic-release/github@^8
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish_image:
+    needs:
+      - release
+    if: needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v3
+      - id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            tensorfusion/tensor-fusion-operator
+          tags: |
+            type=semver,pattern={{needs.release.outputs.version}}
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          no-cache: true
