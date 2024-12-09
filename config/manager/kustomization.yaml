@@ -1,0 +1,4 @@
+namespace: tensor-fusion
+
+resources:
+- manager.yaml

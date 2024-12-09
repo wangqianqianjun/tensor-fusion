@@ -1,0 +1,16 @@
+apiVersion: tensor-fusion.ai/v1
+kind: TensorFusionConnection
+metadata:
+  labels:
+    app.kubernetes.io/name: tensor-fusion-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: tensorfusionconnection-sample
+  namespace: tensor-fusion
+spec:
+  resources:
+    limits:
+      tflops: '100'
+      vram: 8Gi
+    requests:
+      tflops: '20'
+      vram: 9Gi

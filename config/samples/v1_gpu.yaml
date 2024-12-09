@@ -1,0 +1,16 @@
+apiVersion: tensor-fusion.ai/v1
+kind: GPU
+metadata:
+  labels:
+    app.kubernetes.io/name: tensor-fusion-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: gpu-sample
+status:
+  capacity:
+    tflops: '200'
+    vram: 100Gi
+  available:
+    tflops: '200'
+    vram: 100Gi
+  devices: []
+  
