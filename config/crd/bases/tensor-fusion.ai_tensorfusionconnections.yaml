@@ -91,7 +91,7 @@ spec:
             properties:
               connectionURL:
                 type: string
-              node:
+              gpu:
                 type: string
               phase:
                 type: string

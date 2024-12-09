@@ -67,6 +67,10 @@ func (m *TensorFusionPodMutator) Handle(ctx context.Context, req admission.Reque
 	log.Info("Mutating pod", "name", pod.Name, "namespace", pod.Namespace)
 
 	reqs := parseTFReq(pod)
+	if len(reqs) == 0 {
+		return admission.Allowed("no tensor fusion requirements found")
+	}
+
 	// 1. Inject initContainer and env variables
 	patches, err := m.patchTFClient(pod, reqs)
 	if err != nil {
@@ -108,9 +112,14 @@ func parseTFReq(pod *corev1.Pod) []TFReq {
 	for _, container := range pod.Spec.Containers {
 		containerName := container.Name
 
-		// Check if tensor fusion is enabled for this container
-		enableKey := fmt.Sprintf(constants.EnableContainerAnnotationFormat, containerName)
-		if enableStr, ok := pod.Annotations[enableKey]; !ok || enableStr != "true" {
+		// Check if TF requirements exist for this container
+		tflopsKey := fmt.Sprintf(constants.TFLOPSContainerAnnotationFormat, containerName)
+		vramKey := fmt.Sprintf(constants.VRAMContainerAnnotationFormat, containerName)
+
+		tflopsStr, hasTflops := pod.Annotations[tflopsKey]
+		vramStr, hasVram := pod.Annotations[vramKey]
+
+		if !hasTflops && !hasVram {
 			continue
 		}
 
@@ -119,8 +128,7 @@ func parseTFReq(pod *corev1.Pod) []TFReq {
 		}
 
 		// Parse TFLOPS requirement
-		tflopsKey := fmt.Sprintf(constants.TFLOPSContainerAnnotationFormat, containerName)
-		if tflopsStr, ok := pod.Annotations[tflopsKey]; ok {
+		if hasTflops {
 			tflops, err := resource.ParseQuantity(tflopsStr)
 			if err == nil {
 				req.Tflops = tflops
@@ -128,8 +136,7 @@ func parseTFReq(pod *corev1.Pod) []TFReq {
 		}
 
 		// Parse VRAM requirement
-		vramKey := fmt.Sprintf(constants.VRAMContainerAnnotationFormat, containerName)
-		if vramStr, ok := pod.Annotations[vramKey]; ok {
+		if hasVram {
 			vram, err := resource.ParseQuantity(vramStr)
 			if err == nil {
 				req.Vram = vram

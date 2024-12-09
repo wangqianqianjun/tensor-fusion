@@ -23,6 +23,7 @@ import (
 
 	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -67,8 +68,8 @@ var _ = Describe("TensorFusionPodMutator", func() {
 					Name:      "test-pod",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"tf.nexusgpu.com/tflops": "100",
-						"tf.nexusgpu.com/vram":   "16Gi",
+						constants.TensorFusionDomain + "/tflops-main": "100",
+						constants.TensorFusionDomain + "/vram-main":   "16Gi",
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -158,8 +159,8 @@ var _ = Describe("TensorFusionPodMutator", func() {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"tf.nexusgpu.com/tflops": "100",
-						"tf.nexusgpu.com/vram":   "16Gi",
+						constants.TensorFusionDomain + "/tflops-test-container": "100",
+						constants.TensorFusionDomain + "/vram-test-container":   "16Gi",
 					},
 				},
 				Spec: corev1.PodSpec{
