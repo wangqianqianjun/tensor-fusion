@@ -8,9 +8,9 @@ metadata:
   namespace: tensor-fusion
 spec:
   resources:
-    limit:
+    limits:
       tflops: '100'
       vram: 8Gi
-    request:
+    requests:
       tflops: '20'
       vram: 9Gi

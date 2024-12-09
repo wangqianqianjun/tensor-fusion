@@ -92,26 +92,26 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, nil
 	}
 
-	var node *tfv1.GPUNode
+	var gpu *tfv1.GPU
 	// If status is not set or pending, try to schedule
 	if connection.Status.Phase == "" || connection.Status.Phase == tfv1.TensorFusionConnectionPending {
-		// Try to get an available node from scheduler
+		// Try to get an available gpu from scheduler
 		var err error
-		node, err = r.Scheduler.Schedule(connection.Spec.Resources.Requests)
+		gpu, err = r.Scheduler.Schedule(connection.Spec.Resources.Requests)
 		if err != nil {
 			log.Info(err.Error())
 			connection.Status.Phase = tfv1.TensorFusionConnectionPending
-		} else if node != nil {
+		} else if gpu != nil {
 			connection.Status.Phase = tfv1.TensorFusionConnectionRunning
-			connection.Status.ConnectionURL = worker.GenerateConnectionURL(node, connection)
-			// Store the node name for cleanup
-			connection.Status.Node = node.Name
+			connection.Status.ConnectionURL = worker.GenerateConnectionURL(gpu, connection)
+			// Store the gpu name for cleanup
+			connection.Status.GPU = gpu.Name
 		} else {
 			connection.Status.Phase = tfv1.TensorFusionConnectionPending
 		}
 	}
 
-	if err := r.MustUpdateStatus(ctx, connection, node); err != nil {
+	if err := r.MustUpdateStatus(ctx, connection, gpu); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -123,26 +123,26 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 
 // handleDeletion handles cleanup of external dependencies
 func (r *TensorFusionConnectionReconciler) handleDeletion(ctx context.Context, connection *tfv1.TensorFusionConnection) error {
-	if connection.Status.Node == "" {
-		return nil // No node was allocated, nothing to clean up
+	if connection.Status.GPU == "" {
+		return nil // No gpu was allocated, nothing to clean up
 	}
 
-	// Get the node
-	node := &tfv1.GPUNode{}
-	if err := r.Get(ctx, client.ObjectKey{Name: connection.Status.Node}, node); err != nil {
+	// Get the gpu
+	gpu := &tfv1.GPU{}
+	if err := r.Get(ctx, client.ObjectKey{Name: connection.Status.GPU}, gpu); err != nil {
 		if errors.IsNotFound(err) {
-			// Node is already gone, nothing to do
+			// gpu is already gone, nothing to do
 			return nil
 		}
 		return err
 	}
 
 	// Release the resources
-	if err := r.Scheduler.Release(connection.Spec.Resources.Requests, node); err != nil {
+	if err := r.Scheduler.Release(connection.Spec.Resources.Requests, gpu); err != nil {
 		return err
 	}
 
-	return r.MustUpdateStatus(ctx, connection, node)
+	return r.MustUpdateStatus(ctx, connection, gpu)
 }
 
 // Helper functions to handle finalizers
@@ -165,7 +165,7 @@ func removeString(slice []string, s string) []string {
 	return result
 }
 
-func (r *TensorFusionConnectionReconciler) MustUpdateStatus(ctx context.Context, connection *tfv1.TensorFusionConnection, gpuNode *tfv1.GPUNode) error {
+func (r *TensorFusionConnectionReconciler) MustUpdateStatus(ctx context.Context, connection *tfv1.TensorFusionConnection, gpu *tfv1.GPU) error {
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		// Get the latest version of the connection
 		latestConnection := &tfv1.TensorFusionConnection{}
@@ -184,20 +184,20 @@ func (r *TensorFusionConnectionReconciler) MustUpdateStatus(ctx context.Context,
 			return err
 		}
 
-		if gpuNode != nil {
-			// Get the latest version of the node
-			latestNode := &tfv1.GPUNode{}
+		if gpu != nil {
+			// Get the latest version of the gpu
+			latestgpu := &tfv1.GPU{}
 
 			if err := r.Get(ctx, client.ObjectKey{
-				Name:      gpuNode.Name,
-				Namespace: gpuNode.Namespace,
-			}, latestNode); err != nil {
+				Name:      gpu.Name,
+				Namespace: gpu.Namespace,
+			}, latestgpu); err != nil {
 				return err
 			}
 
 			// Update the status fields we care about
-			latestNode.Status.Available = gpuNode.Status.Available
-			if err := r.Status().Update(ctx, latestNode); err != nil {
+			latestgpu.Status.Available = gpu.Status.Available
+			if err := r.Status().Update(ctx, latestgpu); err != nil {
 				return err
 			}
 		}

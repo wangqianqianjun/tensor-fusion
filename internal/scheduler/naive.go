@@ -9,70 +9,70 @@ import (
 
 // NaiveScheduler implements a simple scheduling strategy
 type NaiveScheduler struct {
-	sync.Mutex
-	nodes map[string]*tfv1.GPUNode
+	sync.RWMutex
+	gpus map[string]*tfv1.GPU
 }
 
 // NewNaiveScheduler creates a new NaiveScheduler
 func NewNaiveScheduler() *NaiveScheduler {
 	return &NaiveScheduler{
-		nodes: make(map[string]*tfv1.GPUNode),
+		gpus: make(map[string]*tfv1.GPU),
 	}
 }
 
 // Schedule implements Scheduler interface
-func (s *NaiveScheduler) Schedule(request tfv1.Resource) (*tfv1.GPUNode, error) {
+func (s *NaiveScheduler) Schedule(request tfv1.Resource) (*tfv1.GPU, error) {
 	s.Lock()
 	defer s.Unlock()
 
-	// Simple strategy: return the first node that has enough resources
-	for _, node := range s.nodes {
-		if node.Status.Available.Tflops.Cmp(request.Tflops) >= 0 &&
-			node.Status.Available.Vram.Cmp(request.Vram) >= 0 {
-			// Update the node's available resources
-			node.Status.Available.Tflops.Sub(request.Tflops)
-			node.Status.Available.Vram.Sub(request.Vram)
-			return node, nil
+	// Simple strategy: return the first gpu that has enough resources
+	for _, gpu := range s.gpus {
+		if gpu.Status.Available.Tflops.Cmp(request.Tflops) >= 0 &&
+			gpu.Status.Available.Vram.Cmp(request.Vram) >= 0 {
+			// Update the gpu's available resources
+			gpu.Status.Available.Tflops.Sub(request.Tflops)
+			gpu.Status.Available.Vram.Sub(request.Vram)
+			return gpu, nil
 		}
 	}
-	return nil, fmt.Errorf("no suitable node found for request: %v", request)
+	return nil, fmt.Errorf("no suitable gpu found for request: %v", request)
 }
 
 // OnAdd implements Scheduler interface
-func (s *NaiveScheduler) OnAdd(node *tfv1.GPUNode) {
+func (s *NaiveScheduler) OnAdd(gpu *tfv1.GPU) {
 	s.Lock()
 	defer s.Unlock()
-	s.nodes[node.Name] = node
+	s.gpus[gpu.Name] = gpu
 }
 
 // OnUpdate implements Scheduler interface
-func (s *NaiveScheduler) OnUpdate(oldNode, newNode *tfv1.GPUNode) {
+func (s *NaiveScheduler) OnUpdate(oldgpu, newgpu *tfv1.GPU) {
 	s.Lock()
 	defer s.Unlock()
-	s.nodes[newNode.Name] = newNode
+	s.gpus[newgpu.Name] = newgpu
 }
 
 // OnDelete implements Scheduler interface
-func (s *NaiveScheduler) OnDelete(node *tfv1.GPUNode) {
+func (s *NaiveScheduler) OnDelete(gpu *tfv1.GPU) {
 	s.Lock()
 	defer s.Unlock()
-	delete(s.nodes, node.Name)
+	delete(s.gpus, gpu.Name)
 }
 
 // Release implements Scheduler interface
-func (s *NaiveScheduler) Release(request tfv1.Resource, node *tfv1.GPUNode) error {
+func (s *NaiveScheduler) Release(request tfv1.Resource, gpu *tfv1.GPU) error {
 	s.Lock()
 	defer s.Unlock()
 
-	existingNode, ok := s.nodes[node.Name]
+	existinggpu, ok := s.gpus[gpu.Name]
 	if !ok {
-		return fmt.Errorf("node %s not found", node.Name)
+		return fmt.Errorf("gpu %s not found", gpu.Name)
 	}
 
 	// Add back the released resources
-	existingNode.Status.Available.Tflops.Add(request.Tflops)
-	existingNode.Status.Available.Vram.Add(request.Vram)
-	// output the updated node
-	node.Status.Available = existingNode.Status.Available
+	existinggpu.Status.Available.Tflops.Add(request.Tflops)
+	existinggpu.Status.Available.Vram.Add(request.Vram)
+	// output the updated gpu
+	gpu.Status.Available = existinggpu.Status.Available
 	return nil
 }

@@ -42,7 +42,7 @@ spec:
             properties:
               resources:
                 properties:
-                  limit:
+                  limits:
                     properties:
                       tflops:
                         anyOf:
@@ -60,7 +60,7 @@ spec:
                     - tflops
                     - vram
                     type: object
-                  request:
+                  requests:
                     properties:
                       tflops:
                         anyOf:
@@ -79,8 +79,8 @@ spec:
                     - vram
                     type: object
                 required:
-                - limit
-                - request
+                - limits
+                - requests
                 type: object
             required:
             - resources

@@ -20,33 +20,32 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// GPUNodeStatus defines the observed state of GPUNode.
-type GPUNodeStatus struct {
+// GPUStatus defines the observed state of GPU.
+type GPUStatus struct {
 	Capacity  Resource `json:"capacity"`
 	Available Resource `json:"available"`
-	Devices   []string `json:"devices"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
-// GPUNode is the Schema for the gpunodes API.
-type GPUNode struct {
+// GPU is the Schema for the gpus API.
+type GPU struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Status GPUNodeStatus `json:"status,omitempty"`
+	Status GPUStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// GPUNodeList contains a list of GPUNode.
-type GPUNodeList struct {
+// GPUList contains a list of GPU.
+type GPUList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []GPUNode `json:"items"`
+	Items           []GPU `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&GPUNode{}, &GPUNodeList{})
+	SchemeBuilder.Register(&GPU{}, &GPUList{})
 }

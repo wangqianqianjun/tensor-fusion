@@ -7,7 +7,7 @@ rules:
 - apiGroups:
   - tensor-fusion.ai
   resources:
-  - gpunodes
+  - gpus
   - tensorfusionconnections
   verbs:
   - create
@@ -20,14 +20,14 @@ rules:
 - apiGroups:
   - tensor-fusion.ai
   resources:
-  - gpunodes/finalizers
+  - gpus/finalizers
   - tensorfusionconnections/finalizers
   verbs:
   - update
 - apiGroups:
   - tensor-fusion.ai
   resources:
-  - gpunodes/status
+  - gpus/status
   - tensorfusionconnections/status
   verbs:
   - get

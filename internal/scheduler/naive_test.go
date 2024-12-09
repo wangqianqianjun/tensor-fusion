@@ -8,12 +8,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func createGPUNode(name string, tflops, vram string) *tfv1.GPUNode {
-	return &tfv1.GPUNode{
+func createGPU(name string, tflops, vram string) *tfv1.GPU {
+	return &tfv1.GPU{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Status: tfv1.GPUNodeStatus{
+		Status: tfv1.GPUStatus{
 			Available: tfv1.Resource{
 				Tflops: resource.MustParse(tflops),
 				Vram:   resource.MustParse(vram),
@@ -33,59 +33,59 @@ func createRequest(tflops, vram string) tfv1.Resource {
 func TestNaiveScheduler_Schedule(t *testing.T) {
 	tests := []struct {
 		name                string
-		nodes               []*tfv1.GPUNode
+		gpus                []*tfv1.GPU
 		request             tfv1.Resource
-		wantNode            string
+		wantgpu             string
 		wantError           bool
 		wantRemainingTflops string
 		wantRemainingVram   string
 	}{
 		{
 			name: "simple match",
-			nodes: []*tfv1.GPUNode{
-				createGPUNode("node1", "100", "16Gi"),
+			gpus: []*tfv1.GPU{
+				createGPU("gpu1", "100", "16Gi"),
 			},
 			request:             createRequest("50", "8Gi"),
-			wantNode:            "node1",
+			wantgpu:             "gpu1",
 			wantError:           false,
 			wantRemainingTflops: "50",
 			wantRemainingVram:   "8Gi",
 		},
 		{
-			name:      "no nodes",
-			nodes:     []*tfv1.GPUNode{},
+			name:      "no gpus",
+			gpus:      []*tfv1.GPU{},
 			request:   createRequest("50", "8Gi"),
-			wantNode:  "",
+			wantgpu:   "",
 			wantError: true,
 		},
 		{
 			name: "insufficient resources",
-			nodes: []*tfv1.GPUNode{
-				createGPUNode("node1", "40", "16Gi"),
+			gpus: []*tfv1.GPU{
+				createGPU("gpu1", "40", "16Gi"),
 			},
 			request:   createRequest("50", "8Gi"),
-			wantNode:  "",
+			wantgpu:   "",
 			wantError: true,
 		},
 		{
-			name: "multiple nodes, first fit",
-			nodes: []*tfv1.GPUNode{
-				createGPUNode("node1", "40", "16Gi"),
-				createGPUNode("node2", "100", "32Gi"),
+			name: "multiple gpus, first fit",
+			gpus: []*tfv1.GPU{
+				createGPU("gpu1", "40", "16Gi"),
+				createGPU("gpu2", "100", "32Gi"),
 			},
 			request:             createRequest("50", "8Gi"),
-			wantNode:            "node2",
+			wantgpu:             "gpu2",
 			wantError:           false,
 			wantRemainingTflops: "50",
 			wantRemainingVram:   "24Gi",
 		},
 		{
 			name: "exact match",
-			nodes: []*tfv1.GPUNode{
-				createGPUNode("node1", "50", "8Gi"),
+			gpus: []*tfv1.GPU{
+				createGPU("gpu1", "50", "8Gi"),
 			},
 			request:             createRequest("50", "8Gi"),
-			wantNode:            "node1",
+			wantgpu:             "gpu1",
 			wantError:           false,
 			wantRemainingTflops: "0",
 			wantRemainingVram:   "0",
@@ -96,9 +96,9 @@ func TestNaiveScheduler_Schedule(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := NewNaiveScheduler()
 
-			// Add nodes
-			for _, node := range tt.nodes {
-				s.OnAdd(node)
+			// Add gpus
+			for _, gpu := range tt.gpus {
+				s.OnAdd(gpu)
 			}
 
 			// Try to schedule
@@ -113,11 +113,11 @@ func TestNaiveScheduler_Schedule(t *testing.T) {
 			// Check result
 			if !tt.wantError {
 				if got == nil {
-					t.Error("Schedule() returned nil node when error not expected")
+					t.Error("Schedule() returned nil gpu when error not expected")
 					return
 				}
-				if got.Name != tt.wantNode {
-					t.Errorf("Schedule() got node = %v, want %v", got.Name, tt.wantNode)
+				if got.Name != tt.wantgpu {
+					t.Errorf("Schedule() got gpu = %v, want %v", got.Name, tt.wantgpu)
 				}
 
 				// Check remaining resources
@@ -138,57 +138,57 @@ func TestNaiveScheduler_Schedule(t *testing.T) {
 	}
 }
 
-func TestNaiveScheduler_NodeOperations(t *testing.T) {
+func TestNaiveScheduler_gpuOperations(t *testing.T) {
 	s := NewNaiveScheduler()
-	node1 := createGPUNode("node1", "100", "16Gi")
+	gpu1 := createGPU("gpu1", "100", "16Gi")
 	request := createRequest("50", "8Gi")
 
 	// Test OnAdd
-	s.OnAdd(node1)
+	s.OnAdd(gpu1)
 	got, err := s.Schedule(request)
-	if err != nil || got.Name != "node1" {
-		t.Errorf("After OnAdd: Schedule() got = %v, want node1", got)
+	if err != nil || got.Name != "gpu1" {
+		t.Errorf("After OnAdd: Schedule() got = %v, want gpu1", got)
 	}
 
 	// Test OnUpdate
-	node1Updated := createGPUNode("node1", "40", "16Gi")
-	s.OnUpdate(node1, node1Updated)
+	gpu1Updated := createGPU("gpu1", "40", "16Gi")
+	s.OnUpdate(gpu1, gpu1Updated)
 	_, err = s.Schedule(request)
 	if err == nil {
 		t.Error("After OnUpdate: Schedule() should fail with insufficient resources")
 	}
 
 	// Test OnDelete
-	s.OnDelete(node1Updated)
+	s.OnDelete(gpu1Updated)
 	_, err = s.Schedule(request)
 	if err == nil {
-		t.Error("After OnDelete: Schedule() should fail with no nodes")
+		t.Error("After OnDelete: Schedule() should fail with no gpus")
 	}
 }
 
 func TestNaiveScheduler_Release(t *testing.T) {
 	tests := []struct {
 		name                string
-		node               *tfv1.GPUNode
-		schedule           *tfv1.Resource
-		release            *tfv1.Resource
-		wantError          bool
+		gpu                 *tfv1.GPU
+		schedule            *tfv1.Resource
+		release             *tfv1.Resource
+		wantError           bool
 		wantRemainingTflops string
 		wantRemainingVram   string
 	}{
 		{
-			name:      "release non-existent node",
-			node:      createGPUNode("node1", "100", "16Gi"),
+			name:      "release non-existent gpu",
+			gpu:       createGPU("gpu1", "100", "16Gi"),
 			release:   &tfv1.Resource{},
 			wantError: true,
 		},
 		{
 			name: "release after scheduling",
-			node: &tfv1.GPUNode{
+			gpu: &tfv1.GPU{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "node1",
+					Name: "gpu1",
 				},
-				Status: tfv1.GPUNodeStatus{
+				Status: tfv1.GPUStatus{
 					Capacity: tfv1.Resource{
 						Tflops: resource.MustParse("100"),
 						Vram:   resource.MustParse("16Gi"),
@@ -207,17 +207,17 @@ func TestNaiveScheduler_Release(t *testing.T) {
 				Tflops: resource.MustParse("50"),
 				Vram:   resource.MustParse("8Gi"),
 			},
-			wantError:          false,
+			wantError:           false,
 			wantRemainingTflops: "100",
 			wantRemainingVram:   "16Gi",
 		},
 		{
 			name: "partial release",
-			node: &tfv1.GPUNode{
+			gpu: &tfv1.GPU{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "node1",
+					Name: "gpu1",
 				},
-				Status: tfv1.GPUNodeStatus{
+				Status: tfv1.GPUStatus{
 					Capacity: tfv1.Resource{
 						Tflops: resource.MustParse("100"),
 						Vram:   resource.MustParse("16Gi"),
@@ -236,7 +236,7 @@ func TestNaiveScheduler_Release(t *testing.T) {
 				Tflops: resource.MustParse("30"),
 				Vram:   resource.MustParse("5Gi"),
 			},
-			wantError:          false,
+			wantError:           false,
 			wantRemainingTflops: "70",
 			wantRemainingVram:   "11Gi",
 		},
@@ -247,31 +247,31 @@ func TestNaiveScheduler_Release(t *testing.T) {
 			s := NewNaiveScheduler()
 
 			if !tt.wantError {
-				// Add the node first
-				s.OnAdd(tt.node)
+				// Add the gpu first
+				s.OnAdd(tt.gpu)
 
 				// Schedule some resources if needed
 				if tt.schedule != nil {
-					node, err := s.Schedule(*tt.schedule)
+					gpu, err := s.Schedule(*tt.schedule)
 					if err != nil {
 						t.Errorf("Schedule() error = %v", err)
 						return
 					}
 
 					// Verify resources were allocated
-					expectedTflops := tt.node.Status.Capacity.Tflops.DeepCopy()
-					expectedVram := tt.node.Status.Capacity.Vram.DeepCopy()
+					expectedTflops := tt.gpu.Status.Capacity.Tflops.DeepCopy()
+					expectedVram := tt.gpu.Status.Capacity.Vram.DeepCopy()
 					expectedTflops.Sub(tt.schedule.Tflops)
 					expectedVram.Sub(tt.schedule.Vram)
-					if node.Status.Available.Tflops.Cmp(expectedTflops) != 0 ||
-						node.Status.Available.Vram.Cmp(expectedVram) != 0 {
+					if gpu.Status.Available.Tflops.Cmp(expectedTflops) != 0 ||
+						gpu.Status.Available.Vram.Cmp(expectedVram) != 0 {
 						t.Errorf("Schedule() did not allocate resources correctly")
 						return
 					}
 				}
 			}
 
-			err := s.Release(*tt.release, tt.node)
+			err := s.Release(*tt.release, tt.gpu)
 			if (err != nil) != tt.wantError {
 				t.Errorf("Release() error = %v, wantError %v", err, tt.wantError)
 				return
@@ -279,12 +279,12 @@ func TestNaiveScheduler_Release(t *testing.T) {
 
 			if !tt.wantError {
 				// Verify resources were restored correctly
-				node := s.nodes[tt.node.Name]
-				if node.Status.Available.Tflops.String() != tt.wantRemainingTflops ||
-					node.Status.Available.Vram.String() != tt.wantRemainingVram {
+				gpu := s.gpus[tt.gpu.Name]
+				if gpu.Status.Available.Tflops.String() != tt.wantRemainingTflops ||
+					gpu.Status.Available.Vram.String() != tt.wantRemainingVram {
 					t.Errorf("Release() resources incorrect, got tflops=%v vram=%v, want tflops=%v vram=%v",
-						node.Status.Available.Tflops.String(),
-						node.Status.Available.Vram.String(),
+						gpu.Status.Available.Tflops.String(),
+						gpu.Status.Available.Vram.String(),
 						tt.wantRemainingTflops,
 						tt.wantRemainingVram)
 				}

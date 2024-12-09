@@ -1,27 +1,23 @@
-# permissions for end users to edit gpunodes.
+# permissions for end users to view gpus.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/name: tensor-fusion-operator
     app.kubernetes.io/managed-by: kustomize
-  name: gpunode-editor-role
+  name: gpu-viewer-role
 rules:
 - apiGroups:
   - tensor-fusion.ai
   resources:
-  - gpunodes
+  - gpus
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - tensor-fusion.ai
   resources:
-  - gpunodes/status
+  - gpus/status
   verbs:
   - get

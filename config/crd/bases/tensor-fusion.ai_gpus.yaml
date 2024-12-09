@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.4
-  name: gpunodes.tensor-fusion.ai
+  name: gpus.tensor-fusion.ai
 spec:
   group: tensor-fusion.ai
   names:
-    kind: GPUNode
-    listKind: GPUNodeList
-    plural: gpunodes
-    singular: gpunode
+    kind: GPU
+    listKind: GPUList
+    plural: gpus
+    singular: gpu
   scope: Cluster
   versions:
   - name: v1
     schema:
       openAPIV3Schema:
-        description: GPUNode is the Schema for the gpunodes API.
+        description: GPU is the Schema for the gpus API.
         properties:
           apiVersion:
             description: |-
@@ -37,7 +37,7 @@ spec:
           metadata:
             type: object
           status:
-            description: GPUNodeStatus defines the observed state of GPUNode.
+            description: GPUStatus defines the observed state of GPU.
             properties:
               available:
                 properties:
@@ -75,14 +75,9 @@ spec:
                 - tflops
                 - vram
                 type: object
-              devices:
-                items:
-                  type: string
-                type: array
             required:
             - available
             - capacity
-            - devices
             type: object
         type: object
     served: true

@@ -162,12 +162,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.GPUNodeReconciler{
+	if err = (&controller.GPUReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Scheduler: scheduler,
 	}).SetupWithManager(ctx, mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "GPUNode")
+		setupLog.Error(err, "unable to create controller", "controller", "GPU")
 		os.Exit(1)
 	}
 

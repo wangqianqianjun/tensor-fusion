@@ -20,7 +20,7 @@ resources:
     crdVersion: v1
   controller: true
   domain: tensor-fusion.ai
-  kind: GPUNode
+  kind: GPU
   path: github.com/NexusGPU/tensor-fusion-operator/api/v1
   version: v1
 - core: true

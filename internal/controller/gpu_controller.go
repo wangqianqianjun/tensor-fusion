@@ -29,41 +29,41 @@ import (
 	scheduler "github.com/NexusGPU/tensor-fusion-operator/internal/scheduler"
 )
 
-// GPUNodeReconciler reconciles a GPUNode object
-type GPUNodeReconciler struct {
+// GPUReconciler reconciles a GPU object
+type GPUReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	Scheduler scheduler.Scheduler
 }
 
-// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpunodes,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpunodes/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpunodes/finalizers,verbs=update
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpus,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpus/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpus/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-func (r *GPUNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *GPUReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// TODO: Calculate tflops and update capacity here
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *GPUNodeReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+func (r *GPUReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&tfv1.GPUNode{}).
-		Named("gpunode").
+		For(&tfv1.GPU{}).
+		Named("gpu").
 		WithEventFilter(
 			predicate.Funcs{
 				CreateFunc: func(e event.CreateEvent) bool {
-					r.Scheduler.OnAdd(e.Object.(*tfv1.GPUNode))
+					r.Scheduler.OnAdd(e.Object.(*tfv1.GPU))
 					return true
 				},
 				UpdateFunc: func(e event.UpdateEvent) bool {
-					r.Scheduler.OnUpdate(e.ObjectOld.(*tfv1.GPUNode), e.ObjectNew.(*tfv1.GPUNode))
+					r.Scheduler.OnUpdate(e.ObjectOld.(*tfv1.GPU), e.ObjectNew.(*tfv1.GPU))
 					return true
 				},
 				DeleteFunc: func(e event.DeleteEvent) bool {
-					r.Scheduler.OnDelete(e.Object.(*tfv1.GPUNode))
+					r.Scheduler.OnDelete(e.Object.(*tfv1.GPU))
 					return true
 				},
 			},

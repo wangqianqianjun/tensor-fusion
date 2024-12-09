@@ -1,10 +1,10 @@
 apiVersion: tensor-fusion.ai/v1
-kind: GPUNode
+kind: GPU
 metadata:
   labels:
     app.kubernetes.io/name: tensor-fusion-operator
     app.kubernetes.io/managed-by: kustomize
-  name: gpunode-sample
+  name: gpu-sample
 status:
   capacity:
     tflops: '200'

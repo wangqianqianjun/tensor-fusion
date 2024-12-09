@@ -3,7 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/tensor-fusion.ai_tensorfusionconnections.yaml
-- bases/tensor-fusion.ai_gpunodes.yaml
+- bases/tensor-fusion.ai_gpus.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
