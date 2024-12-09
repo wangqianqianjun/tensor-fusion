@@ -207,11 +207,11 @@ func generateTensorFusionConnection(pod *corev1.Pod, tfReq []TFReq) []*tfv1.Tens
 			},
 			Spec: tfv1.TensorFusionConnectionSpec{
 				Resources: tfv1.Resources{
-					Request: tfv1.Resource{
+					Requests: tfv1.Resource{
 						Tflops: req.Tflops,
 						Vram:   req.Vram,
 					},
-					Limit: tfv1.Resource{
+					Limits: tfv1.Resource{
 						Tflops: req.Tflops,
 						Vram:   req.Vram,
 					},

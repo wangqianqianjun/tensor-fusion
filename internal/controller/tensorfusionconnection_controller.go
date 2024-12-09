@@ -97,7 +97,7 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 	if connection.Status.Phase == "" || connection.Status.Phase == tfv1.TensorFusionConnectionPending {
 		// Try to get an available node from scheduler
 		var err error
-		node, err = r.Scheduler.Schedule(connection.Spec.Resources.Request)
+		node, err = r.Scheduler.Schedule(connection.Spec.Resources.Requests)
 		if err != nil {
 			log.Info(err.Error())
 			connection.Status.Phase = tfv1.TensorFusionConnectionPending
@@ -138,7 +138,7 @@ func (r *TensorFusionConnectionReconciler) handleDeletion(ctx context.Context, c
 	}
 
 	// Release the resources
-	if err := r.Scheduler.Release(connection.Spec.Resources.Request, node); err != nil {
+	if err := r.Scheduler.Release(connection.Spec.Resources.Requests, node); err != nil {
 		return err
 	}
 

@@ -27,8 +27,8 @@ type Resource struct {
 }
 
 type Resources struct {
-	Request Resource `json:"request"`
-	Limit   Resource `json:"limit"`
+	Requests Resource `json:"requests"`
+	Limits   Resource `json:"limits"`
 }
 
 // TensorFusionConnectionSpec defines the desired state of TensorFusionConnection.
