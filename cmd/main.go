@@ -44,6 +44,7 @@ import (
 	"github.com/NexusGPU/tensor-fusion-operator/internal/server"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/server/router"
 	webhookcorev1 "github.com/NexusGPU/tensor-fusion-operator/internal/webhook/v1"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/worker"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -157,6 +158,9 @@ func main() {
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Scheduler: scheduler,
+		WorkerGenerator: &worker.WorkerGenerator{
+			PodTemplate: &config.WorkerTemplate,
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TensorFusionConnection")
 		os.Exit(1)

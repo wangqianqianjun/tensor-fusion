@@ -18,9 +18,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,13 +32,15 @@ import (
 	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
 	scheduler "github.com/NexusGPU/tensor-fusion-operator/internal/scheduler"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/worker"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // TensorFusionConnectionReconciler reconciles a TensorFusionConnection object
 type TensorFusionConnectionReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	Scheduler scheduler.Scheduler
+	Scheme          *runtime.Scheme
+	Scheduler       scheduler.Scheduler
+	WorkerGenerator *worker.WorkerGenerator
 }
 
 var (
@@ -102,23 +106,57 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 			log.Info(err.Error())
 			connection.Status.Phase = tfv1.TensorFusionConnectionPending
 		} else if gpu != nil {
-			connection.Status.Phase = tfv1.TensorFusionConnectionRunning
-			connection.Status.ConnectionURL = worker.GenerateConnectionURL(gpu, connection)
+			connection.Status.Phase = tfv1.TensorFusionConnectionStarting
 			// Store the gpu name for cleanup
 			connection.Status.GPU = gpu.Name
 		} else {
+			// Init status
 			connection.Status.Phase = tfv1.TensorFusionConnectionPending
 		}
 	}
+
+	// Start worker job
+	phase, err := r.TryStartWorker(ctx, connection, types.NamespacedName{Name: connection.Name, Namespace: connection.Namespace})
+	if err != nil {
+		log.Error(err, "Failed to start worker pod")
+		return ctrl.Result{}, err
+	}
+
+	if phase == corev1.PodRunning {
+		connection.Status.Phase = tfv1.TensorFusionConnectionRunning
+		connection.Status.ConnectionURL = r.WorkerGenerator.GenerateConnectionURL(gpu, connection)
+	}
+	// TODO: Handle PodFailure
 
 	if err := r.MustUpdateStatus(ctx, connection, gpu); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	if connection.Status.Phase == tfv1.TensorFusionConnectionPending {
+		// requeue
 		return ctrl.Result{RequeueAfter: constants.PendingRequeueDuration}, nil
 	}
+
 	return ctrl.Result{}, nil
+}
+
+func (r *TensorFusionConnectionReconciler) TryStartWorker(ctx context.Context, connection *tfv1.TensorFusionConnection, namespacedName types.NamespacedName) (corev1.PodPhase, error) {
+	// Try to get the Pod
+	pod := &corev1.Pod{}
+	if err := r.Get(ctx, namespacedName, pod); err != nil {
+		if errors.IsNotFound(err) {
+			// Pod doesn't exist, create a new one
+			pod = r.WorkerGenerator.GenerateWorkerPod(connection, namespacedName)
+			if err := ctrl.SetControllerReference(connection, pod, r.Scheme); err != nil {
+				return "", fmt.Errorf("set owner reference %w", err)
+			}
+			if err := r.Create(ctx, pod); err != nil {
+				return "", fmt.Errorf("create pod %w", err)
+			}
+			return corev1.PodPending, nil
+		}
+	}
+	return pod.Status.Phase, nil
 }
 
 // handleDeletion handles cleanup of external dependencies
@@ -209,6 +247,7 @@ func (r *TensorFusionConnectionReconciler) MustUpdateStatus(ctx context.Context,
 func (r *TensorFusionConnectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&tfv1.TensorFusionConnection{}).
+		Owns(&corev1.Pod{}).
 		Named("tensorfusionconnection").
 		Complete(r)
 }
