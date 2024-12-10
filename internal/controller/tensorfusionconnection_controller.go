@@ -116,7 +116,7 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// Start worker job
-	phase, err := r.TryStartWorker(ctx, connection, types.NamespacedName{Name: connection.Name, Namespace: connection.Namespace})
+	phase, err := r.tryStartWorker(ctx, connection, types.NamespacedName{Name: connection.Name, Namespace: connection.Namespace})
 	if err != nil {
 		log.Error(err, "Failed to start worker pod")
 		return ctrl.Result{}, err
@@ -140,7 +140,7 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 	return ctrl.Result{}, nil
 }
 
-func (r *TensorFusionConnectionReconciler) TryStartWorker(ctx context.Context, connection *tfv1.TensorFusionConnection, namespacedName types.NamespacedName) (corev1.PodPhase, error) {
+func (r *TensorFusionConnectionReconciler) tryStartWorker(ctx context.Context, connection *tfv1.TensorFusionConnection, namespacedName types.NamespacedName) (corev1.PodPhase, error) {
 	// Try to get the Pod
 	pod := &corev1.Pod{}
 	if err := r.Get(ctx, namespacedName, pod); err != nil {
