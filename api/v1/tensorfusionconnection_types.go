@@ -40,8 +40,9 @@ type TensorFusionConnectionPhase string
 
 // These are the valid phases of a GpuConnection.
 const (
-	TensorFusionConnectionPending TensorFusionConnectionPhase = "Pending"
-	TensorFusionConnectionRunning TensorFusionConnectionPhase = "Running"
+	TensorFusionConnectionPending  TensorFusionConnectionPhase = "Pending"
+	TensorFusionConnectionStarting TensorFusionConnectionPhase = "Starting"
+	TensorFusionConnectionRunning  TensorFusionConnectionPhase = "Running"
 )
 
 // TensorFusionConnectionStatus defines the observed state of TensorFusionConnection.

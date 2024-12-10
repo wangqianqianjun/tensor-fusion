@@ -28,6 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	tensorfusionaiv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/worker"
 )
 
 var _ = Describe("TensorFusionConnection Controller", func() {
@@ -68,11 +70,14 @@ var _ = Describe("TensorFusionConnection Controller", func() {
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
+			config := config.NewDefaultConfig()
 			controllerReconciler := &TensorFusionConnectionReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
+				WorkerGenerator: &worker.WorkerGenerator{
+					PodTemplate: &config.WorkerTemplate,
+				},
 			}
-
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
