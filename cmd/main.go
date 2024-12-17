@@ -219,6 +219,13 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "GPUNodeClass")
 		os.Exit(1)
 	}
+	if err = (&controller.SchedulingConfigTemplateReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SchedulingConfigTemplate")
+		os.Exit(1)
+	}
 	if err = (&controller.PodReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
