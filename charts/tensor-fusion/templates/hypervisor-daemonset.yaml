@@ -28,13 +28,15 @@ spec:
           emptyDir: {}
       containers:
         - name: tensor-fusion-hypervisor
-          image: tensorfusion/tensor-fusion-hypervisor:1.8.1_amd64
+          image: "{{ .Values.hypervisor.image.repository }}:{{ .Values.hypervisor.image.tag }}"
           command:
             - /home/app/tensor-fusion-hypervisor
-            - '--sock-path'
+            - --sock-path
             - /tensor-fusion/worker/sock/
-            - '--gpu-metrics-file'
+            - --gpu-metrics-file
             - /logs/metrics.log
+            - --scheduler
+            - random1
           env:
             - name: NVIDIA_VISIBLE_DEVICES
               value: all

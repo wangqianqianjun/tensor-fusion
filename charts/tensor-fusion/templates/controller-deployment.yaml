@@ -41,6 +41,11 @@ spec:
             - name: cert
               readOnly: true
               mountPath: /tmp/k8s-webhook-server/serving-certs
+              items:
+              - key: tls.crt
+                path: cert
+              - key: tls.key
+                path: key
             - name: config
               mountPath: /etc/tensor-fusion
       volumes:

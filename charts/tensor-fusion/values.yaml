@@ -21,6 +21,10 @@ serviceAccount:
 
 hypervisor:
   greptimedbEendpoint: greptimedb-standalone.greptimedb.svc.cluster.local:4001
+  image:
+    repository: tensorfusion/tensor-fusion-hypervisor
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: "1.9.0_amd64"
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:

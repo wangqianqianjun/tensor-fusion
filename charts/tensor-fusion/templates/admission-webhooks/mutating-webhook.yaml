@@ -7,8 +7,8 @@ webhooks:
   - v1
   clientConfig:
     service:
-      name: webhook-service
-      namespace: system
+      name: {{ include "tensor-fusion.fullname" . }}-webhook
+      namespace: {{ include "tensor-fusion.namespace" . }}
       path: /mutate-v1-pod
   failurePolicy: Fail
   name: mpod-v1.kb.io
