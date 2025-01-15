@@ -34,17 +34,17 @@ func (wg *WorkerGenerator) GenerateConnectionURL(connection *tfv1.TensorFusionCo
 	return fmt.Sprintf("native+%s+%s", pod.Status.PodIP, port.Value), nil
 }
 
-func (wg *WorkerGenerator) AllocPort() int16 {
+func (wg *WorkerGenerator) AllocPort() int {
 	min := 30000
 	max := 65535
-	return int16(rand.Intn(max-min+1) + min)
+	return rand.Intn(max-min+1) + min
 }
 
 func (wg *WorkerGenerator) GenerateWorkerPod(
 	gpu *tfv1.GPU,
 	connection *tfv1.TensorFusionConnection,
 	namespacedName types.NamespacedName,
-	port int16,
+	port int,
 ) *corev1.Pod {
 	spec := wg.WorkerConfig.Template.Spec.DeepCopy()
 	if spec.NodeSelector == nil {
