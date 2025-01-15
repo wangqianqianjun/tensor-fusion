@@ -119,7 +119,7 @@ func GenerateTensorFusionConnection(pod *corev1.Pod, tfReq []webhookv1.TFReq) []
 func (r *PodReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	p, err := predicate.LabelSelectorPredicate(metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			constants.TensorFusionDomain + "/enabled": "true",
+			constants.Domain + "/enabled": "true",
 		},
 	})
 	if err != nil {

@@ -9,6 +9,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.22.1
 	github.com/onsi/gomega v1.36.2
 	github.com/samber/lo v1.47.0
+	golang.org/x/exp v0.0.0-20241217172543-b2144cdd0a67
 	gomodules.xyz/jsonpatch/v2 v2.4.0
 	k8s.io/api v0.32.0
 	k8s.io/apimachinery v0.32.0
@@ -94,7 +95,6 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/arch v0.12.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/exp v0.0.0-20241217172543-b2144cdd0a67 // indirect
 	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/oauth2 v0.24.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect

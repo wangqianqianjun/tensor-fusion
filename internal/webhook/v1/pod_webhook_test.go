@@ -69,8 +69,8 @@ var _ = Describe("TensorFusionPodMutator", func() {
 					Name:      "test-pod",
 					Namespace: "default",
 					Annotations: map[string]string{
-						constants.TensorFusionDomain + "/tflops-main": "100",
-						constants.TensorFusionDomain + "/vram-main":   "16Gi",
+						constants.Domain + "/tflops-main": "100",
+						constants.Domain + "/vram-main":   "16Gi",
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -165,8 +165,8 @@ var _ = Describe("TensorFusionPodMutator", func() {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						constants.TensorFusionDomain + "/tflops-test-container": "100",
-						constants.TensorFusionDomain + "/vram-test-container":   "16Gi",
+						constants.Domain + "/tflops-test-container": "100",
+						constants.Domain + "/vram-test-container":   "16Gi",
 					},
 				},
 				Spec: corev1.PodSpec{

@@ -44,7 +44,7 @@ type TensorFusionConnectionReconciler struct {
 }
 
 var (
-	tensorFusionConnectionFinalizer = constants.TensorFusionFinalizer
+	tensorFusionConnectionFinalizer = constants.Finalizer
 )
 
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
@@ -134,7 +134,10 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 
 		if workerPod.Status.Phase == corev1.PodRunning {
 			connection.Status.Phase = tfv1.TensorFusionConnectionRunning
-			connection.Status.ConnectionURL = r.WorkerGenerator.GenerateConnectionURL(connection, workerPod)
+			connection.Status.ConnectionURL, err = r.WorkerGenerator.GenerateConnectionURL(connection, workerPod)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 		// TODO: Handle PodFailure
 	}
@@ -157,7 +160,8 @@ func (r *TensorFusionConnectionReconciler) tryStartWorker(ctx context.Context, g
 	if err := r.Get(ctx, namespacedName, pod); err != nil {
 		if errors.IsNotFound(err) {
 			// Pod doesn't exist, create a new one
-			pod = r.WorkerGenerator.GenerateWorkerPod(gpu, connection, namespacedName)
+			port := r.WorkerGenerator.AllocPort()
+			pod = r.WorkerGenerator.GenerateWorkerPod(gpu, connection, namespacedName, port)
 			if err := ctrl.SetControllerReference(connection, pod, r.Scheme); err != nil {
 				return nil, fmt.Errorf("set owner reference %w", err)
 			}

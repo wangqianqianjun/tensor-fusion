@@ -29,7 +29,7 @@ import (
 )
 
 var (
-	tensorFusionClusterFinalizer = constants.TensorFusionFinalizer
+	tensorFusionClusterFinalizer = constants.Finalizer
 )
 
 // TensorFusionClusterReconciler reconciles a TensorFusionCluster object
