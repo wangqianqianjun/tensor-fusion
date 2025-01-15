@@ -24,14 +24,14 @@ func (wg *WorkerGenerator) GenerateWorkerPod(
 	namespacedName types.NamespacedName,
 ) *corev1.Pod {
 
-	spec := wg.WorkerConfig.Template.Spec
+	spec := wg.WorkerConfig.Template.Spec.DeepCopy()
 
 	if spec.NodeSelector == nil {
 		spec.NodeSelector = make(map[string]string)
 	}
 	spec.NodeSelector = gpu.Status.NodeSelector
 
-	spec.Containers[0].Env = append(append([]corev1.EnvVar{}, spec.Containers[0].Env...), corev1.EnvVar{
+	spec.Containers[0].Env = append(spec.Containers[0].Env, corev1.EnvVar{
 		Name:  "NVIDIA_VISIBLE_DEVICES",
 		Value: gpu.Status.UUID,
 	})
