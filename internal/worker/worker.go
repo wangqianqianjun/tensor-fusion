@@ -31,7 +31,7 @@ func (wg *WorkerGenerator) GenerateConnectionURL(connection *tfv1.TensorFusionCo
 	if !ok {
 		return "", fmt.Errorf("worker port not found in pod %s", pod.Name)
 	}
-	return fmt.Sprintf("native+%s+%d", pod.Status.PodIP, port.Value), nil
+	return fmt.Sprintf("native+%s+%s", pod.Status.PodIP, port.Value), nil
 }
 
 func (wg *WorkerGenerator) AllocPort() int16 {
