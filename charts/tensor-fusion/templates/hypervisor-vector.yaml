@@ -28,6 +28,7 @@ data:
           - parse_influx
         source: |
           .namespace = "tf"
+          .tags.nodeip = "${NODE_IP}"
       
       log_to_metric:
         type: log_to_metric
@@ -36,6 +37,7 @@ data:
         all_metrics: true
         metrics: []
     sinks:
+      
       sink_greptimedb_metrics:
         type: greptimedb_metrics
         inputs:

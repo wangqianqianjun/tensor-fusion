@@ -41,11 +41,6 @@ spec:
             - name: cert
               readOnly: true
               mountPath: /tmp/k8s-webhook-server/serving-certs
-              items:
-              - key: tls.crt
-                path: cert
-              - key: tls.key
-                path: key
             - name: config
               mountPath: /etc/tensor-fusion
       volumes:
@@ -53,6 +48,11 @@ spec:
           secret:
             secretName: {{.Values.controller.admissionWebhooks.secretName}}
             defaultMode: 420
+            items:
+              - key: cert
+                path: tls.crt
+              - key: key
+                path: tls.key
         - name: config
           configMap:
             name: {{ include "tensor-fusion.fullname" . }}-config

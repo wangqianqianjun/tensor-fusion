@@ -53,6 +53,12 @@ spec:
           imagePullPolicy: IfNotPresent
         - name: vector
           image: docker.io/timberio/vector:nightly-2025-01-07-debian
+          env:
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.hostIP
           resources:
             requests:
               cpu: 50m
