@@ -57,7 +57,7 @@ func (wg *WorkerGenerator) GenerateWorkerPod(
 		Value: gpu.Status.UUID,
 	}, corev1.EnvVar{
 		Name:  constants.WorkerPortEnv,
-		Value: strconv.Itoa(int(port)),
+		Value: strconv.Itoa(port),
 	})
 
 	return &corev1.Pod{
