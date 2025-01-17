@@ -69,13 +69,13 @@ func (m *TensorFusionPodMutator) Handle(ctx context.Context, req admission.Reque
 	log := log.FromContext(ctx)
 	log.Info("Mutating pod", "generateName", pod.GenerateName, "namespace", pod.Namespace)
 
-	reqs := ParseTFReq(pod)
-	if len(reqs) == 0 {
+	resources := ParseTFResources(pod)
+	if len(resources) == 0 {
 		return admission.Allowed("no tensor fusion requirements found")
 	}
 
 	// 1. Inject initContainer and env variables
-	patches, err := m.patchTFClient(pod, reqs)
+	patches, err := m.patchTFClient(pod, resources)
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
@@ -89,36 +89,43 @@ func (m *TensorFusionPodMutator) InjectDecoder(d admission.Decoder) error {
 	return nil
 }
 
-type TFReq struct {
+type TFResource struct {
 	ContainerName       string
 	ConnectionName      string
 	ConnectionNamespace string
-	Tflops              resource.Quantity
-	Vram                resource.Quantity
+	TflopsRequest       resource.Quantity
+	VramRequest         resource.Quantity
+	TflopsLimit         resource.Quantity
+	VramLimit           resource.Quantity
 }
 
-func ParseTFReq(pod *corev1.Pod) []TFReq {
+func ParseTFResources(pod *corev1.Pod) []TFResource {
 	if pod.Annotations == nil {
 		return nil
 	}
 
-	reqs := make([]TFReq, 0, len(pod.Spec.Containers))
+	reqs := make([]TFResource, 0, len(pod.Spec.Containers))
 
 	for _, container := range pod.Spec.Containers {
 		containerName := container.Name
 
 		// Check if TF requirements exist for this container
-		tflopsKey := fmt.Sprintf(constants.TFLOPSContainerAnnotationFormat, containerName)
-		vramKey := fmt.Sprintf(constants.VRAMContainerAnnotationFormat, containerName)
+		tflopsReqKey := fmt.Sprintf(constants.TFLOPSRequestAnnotationFormat, containerName)
+		vramReqKey := fmt.Sprintf(constants.VRAMRequestAnnotationFormat, containerName)
+		tflopsLimitKey := fmt.Sprintf(constants.TFLOPSLimitAnnotationFormat, containerName)
+		vramLimitKey := fmt.Sprintf(constants.VRAMLimitAnnotationFormat, containerName)
 
-		tflopsStr, hasTflops := pod.Annotations[tflopsKey]
-		vramStr, hasVram := pod.Annotations[vramKey]
+		tflopsReqStr, hasTflopsReq := pod.Annotations[tflopsReqKey]
+		vramReqStr, hasVramReq := pod.Annotations[vramReqKey]
 
-		if !hasTflops && !hasVram {
+		tflopsLimitStr, hasTflopsLimit := pod.Annotations[tflopsLimitKey]
+		vramLimitStr, hasVramLimit := pod.Annotations[vramLimitKey]
+
+		if !hasTflopsReq && !hasVramReq && !hasTflopsLimit && !hasVramLimit {
 			continue
 		}
 
-		req := TFReq{
+		req := TFResource{
 			ContainerName: containerName,
 		}
 		connectionNameEnv, ok := lo.Find(container.Env, func(e corev1.EnvVar) bool {
@@ -133,19 +140,35 @@ func ParseTFReq(pod *corev1.Pod) []TFReq {
 		if ok {
 			req.ConnectionNamespace = connectionNamespaceEnv.Value
 		}
-		// Parse TFLOPS requirement
-		if hasTflops {
-			tflops, err := resource.ParseQuantity(tflopsStr)
+		// Parse TFLOPS request
+		if hasTflopsReq {
+			tflops, err := resource.ParseQuantity(tflopsReqStr)
 			if err == nil {
-				req.Tflops = tflops
+				req.TflopsRequest = tflops
 			}
 		}
 
-		// Parse VRAM requirement
-		if hasVram {
-			vram, err := resource.ParseQuantity(vramStr)
+		// Parse VRAM request
+		if hasVramReq {
+			vram, err := resource.ParseQuantity(vramReqStr)
 			if err == nil {
-				req.Vram = vram
+				req.VramRequest = vram
+			}
+		}
+
+		// Parse TFLOPS limit
+		if hasTflopsReq {
+			tflops, err := resource.ParseQuantity(tflopsLimitStr)
+			if err == nil {
+				req.TflopsLimit = tflops
+			}
+		}
+
+		// Parse VRAM limit
+		if hasVramReq {
+			vram, err := resource.ParseQuantity(vramLimitStr)
+			if err == nil {
+				req.VramLimit = vram
 			}
 		}
 
@@ -155,7 +178,7 @@ func ParseTFReq(pod *corev1.Pod) []TFReq {
 	return reqs
 }
 
-func (m *TensorFusionPodMutator) patchTFClient(pod *corev1.Pod, tfReq []TFReq) ([]jsonpatch.JsonPatchOperation, error) {
+func (m *TensorFusionPodMutator) patchTFClient(pod *corev1.Pod, tfReq []TFResource) ([]jsonpatch.JsonPatchOperation, error) {
 	// Convert the current pod to JSON
 	currentBytes, err := json.Marshal(pod)
 	if err != nil {

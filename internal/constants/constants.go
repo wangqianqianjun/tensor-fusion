@@ -11,9 +11,11 @@ const (
 	Finalizer       = Domain + "/" + FinalizerSuffix
 
 	// Annotation key constants
-	EnableContainerAnnotationFormat = Domain + "/enable-%s"
-	TFLOPSContainerAnnotationFormat = Domain + "/tflops-%s"
-	VRAMContainerAnnotationFormat   = Domain + "/vram-%s"
+	EnableAnnotationFormat        = Domain + "/enable-%s"
+	TFLOPSRequestAnnotationFormat = Domain + "/tflops-request-%s"
+	VRAMRequestAnnotationFormat   = Domain + "/vram-request-%s"
+	TFLOPSLimitAnnotationFormat   = Domain + "/tflops-limit-%s"
+	VRAMLimitAnnotationFormat     = Domain + "/vram-limit-%s"
 
 	PendingRequeueDuration = time.Second * 3
 

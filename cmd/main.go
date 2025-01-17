@@ -26,6 +26,14 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	tensorfusionaiv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/controller"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/scheduler"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/server"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/server/router"
+	webhookcorev1 "github.com/NexusGPU/tensor-fusion-operator/internal/webhook/v1"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/worker"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -36,15 +44,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
-
-	tensorfusionaiv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
-	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
-	"github.com/NexusGPU/tensor-fusion-operator/internal/controller"
-	"github.com/NexusGPU/tensor-fusion-operator/internal/scheduler"
-	"github.com/NexusGPU/tensor-fusion-operator/internal/server"
-	"github.com/NexusGPU/tensor-fusion-operator/internal/server/router"
-	webhookcorev1 "github.com/NexusGPU/tensor-fusion-operator/internal/webhook/v1"
-	"github.com/NexusGPU/tensor-fusion-operator/internal/worker"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -76,7 +75,7 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	flag.BoolVar(&secureMetrics, "metrics-secure", true,
+	flag.BoolVar(&secureMetrics, "metrics-secure", false,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")

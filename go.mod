@@ -8,6 +8,7 @@ require (
 	github.com/lithammer/shortuuid/v4 v4.2.0
 	github.com/onsi/ginkgo/v2 v2.22.1
 	github.com/onsi/gomega v1.36.2
+	github.com/prometheus/client_golang v1.20.5
 	github.com/samber/lo v1.47.0
 	golang.org/x/exp v0.0.0-20241217172543-b2144cdd0a67
 	gomodules.xyz/jsonpatch/v2 v2.4.0
@@ -72,7 +73,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/prometheus/client_golang v1.20.5 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.61.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect

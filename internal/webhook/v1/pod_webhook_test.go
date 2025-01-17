@@ -19,6 +19,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
@@ -63,14 +64,16 @@ var _ = Describe("TensorFusionPodMutator", func() {
 	})
 
 	Context("Handle", func() {
-		It("should successfully mutate a pod with TF requirements", func() {
+		It("should successfully mutate a pod with TF resources", func() {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
 					Namespace: "default",
 					Annotations: map[string]string{
-						constants.Domain + "/tflops-main": "100",
-						constants.Domain + "/vram-main":   "16Gi",
+						fmt.Sprintf(constants.TFLOPSRequestAnnotationFormat, "main"): "10",
+						fmt.Sprintf(constants.VRAMRequestAnnotationFormat, "main"):   "1Gi",
+						fmt.Sprintf(constants.TFLOPSLimitAnnotationFormat, "main"):   "100",
+						fmt.Sprintf(constants.VRAMLimitAnnotationFormat, "main"):     "16Gi",
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -165,8 +168,10 @@ var _ = Describe("TensorFusionPodMutator", func() {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						constants.Domain + "/tflops-test-container": "100",
-						constants.Domain + "/vram-test-container":   "16Gi",
+						fmt.Sprintf(constants.TFLOPSRequestAnnotationFormat, "test-container"): "10",
+						fmt.Sprintf(constants.VRAMRequestAnnotationFormat, "test-container"):   "1Gi",
+						fmt.Sprintf(constants.TFLOPSLimitAnnotationFormat, "test-container"):   "100",
+						fmt.Sprintf(constants.VRAMLimitAnnotationFormat, "test-container"):     "16Gi",
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -188,11 +193,13 @@ var _ = Describe("TensorFusionPodMutator", func() {
 				},
 			}
 
-			reqs := ParseTFReq(pod)
-			Expect(reqs).To(HaveLen(1))
-			Expect(reqs[0].ContainerName).To(Equal("test-container"))
-			Expect(reqs[0].Tflops.String()).To(Equal("100"))
-			Expect(reqs[0].Vram.String()).To(Equal("16Gi"))
+			resources := ParseTFResources(pod)
+			Expect(resources).To(HaveLen(1))
+			Expect(resources[0].ContainerName).To(Equal("test-container"))
+			Expect(resources[0].TflopsRequest.String()).To(Equal("10"))
+			Expect(resources[0].VramRequest.String()).To(Equal("1Gi"))
+			Expect(resources[0].TflopsLimit.String()).To(Equal("100"))
+			Expect(resources[0].VramLimit.String()).To(Equal("16Gi"))
 		})
 	})
 
@@ -207,7 +214,7 @@ var _ = Describe("TensorFusionPodMutator", func() {
 					},
 				},
 			}
-			patch, err := mutator.patchTFClient(pod, []TFReq{{ContainerName: "test-container", Tflops: resource.MustParse("100"), Vram: resource.MustParse("16Gi")}})
+			patch, err := mutator.patchTFClient(pod, []TFResource{{ContainerName: "test-container", TflopsRequest: resource.MustParse("100"), VramRequest: resource.MustParse("16Gi")}})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(patch).NotTo(BeEmpty())
 			Expect(patch).To(HaveLen(2))

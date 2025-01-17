@@ -22,7 +22,9 @@ import (
 
 	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/metrics"
 	webhookv1 "github.com/NexusGPU/tensor-fusion-operator/internal/webhook/v1"
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,13 +57,13 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		log.Error(err, "Failed to get Pod")
 		return ctrl.Result{}, err
 	}
-	reqs := webhookv1.ParseTFReq(pod)
-	if len(reqs) == 0 {
+	resources := webhookv1.ParseTFResources(pod)
+	if len(resources) == 0 {
 		return ctrl.Result{}, nil
 	}
 
 	// generate tensor fusion connections and apply to cluster
-	tfConnections := GenerateTensorFusionConnection(pod, reqs)
+	tfConnections := GenerateTensorFusionConnection(pod, resources)
 
 	for _, tfConnection := range tfConnections {
 		existConn := &tfv1.TensorFusionConnection{}
@@ -73,10 +75,24 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			}
 		}
 	}
+
+	// update metrics
+	for _, res := range resources {
+		labels := prometheus.Labels{
+			"pod":       pod.Name,
+			"namespace": pod.Namespace,
+			"container": res.ContainerName,
+		}
+		metrics.GpuTflopsRequest.With(labels).Set(res.TflopsRequest.AsApproximateFloat64())
+		metrics.GpuTflopsLimit.With(labels).Set(res.TflopsLimit.AsApproximateFloat64())
+		metrics.VramBytesRequest.With(labels).Set(res.VramRequest.AsApproximateFloat64())
+		metrics.VramBytesLimit.With(labels).Set(res.VramLimit.AsApproximateFloat64())
+	}
+
 	return ctrl.Result{}, nil
 }
 
-func GenerateTensorFusionConnection(pod *corev1.Pod, tfReq []webhookv1.TFReq) []*tfv1.TensorFusionConnection {
+func GenerateTensorFusionConnection(pod *corev1.Pod, tfReq []webhookv1.TFResource) []*tfv1.TensorFusionConnection {
 	connections := make([]*tfv1.TensorFusionConnection, 0, len(tfReq))
 
 	for _, req := range tfReq {
@@ -96,12 +112,12 @@ func GenerateTensorFusionConnection(pod *corev1.Pod, tfReq []webhookv1.TFReq) []
 			Spec: tfv1.TensorFusionConnectionSpec{
 				Resources: tfv1.Resources{
 					Requests: tfv1.Resource{
-						Tflops: req.Tflops,
-						Vram:   req.Vram,
+						Tflops: req.TflopsRequest,
+						Vram:   req.VramRequest,
 					},
 					Limits: tfv1.Resource{
-						Tflops: req.Tflops,
-						Vram:   req.Vram,
+						Tflops: req.TflopsLimit,
+						Vram:   req.VramLimit,
 					},
 				},
 			},
