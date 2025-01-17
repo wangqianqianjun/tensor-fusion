@@ -51,4 +51,4 @@ data:
         type: prometheus_remote_write
         inputs:
           - controller_metrics
-        endpoint: http://{{ .Values.hypervisor.greptimedbEendpoint }}/v1/prometheus/write?db=public
+        endpoint: {{ .Values.controller.greptimedbEendpoint }}
