@@ -11,8 +11,11 @@ data:
         data_dir: /logs
         include:
           - /logs/metrics.log
-      in:
-        type: host_metrics
+      
+      controller_metrics:
+        type: prometheus_scrape
+        endpoints:
+          - http://localhost:9000/metrics
 
     transforms:
       parse_influx:
@@ -28,7 +31,7 @@ data:
           - parse_influx
         source: |
           .namespace = "tf"
-          .tags.nodeip = "${NODE_IP}"
+          .tags.nodeName = "${NODE_NAME}"
       
       log_to_metric:
         type: log_to_metric
@@ -37,10 +40,15 @@ data:
         all_metrics: true
         metrics: []
     sinks:
-      
-      sink_greptimedb_metrics:
+      sink_greptimedb_hypervisor_metrics:
         type: greptimedb_metrics
         inputs:
           - log_to_metric
         new_naming: false
         endpoint: {{ .Values.hypervisor.greptimedbEendpoint }}
+
+      sink_greptimedb_controller_metrics:
+        type: prometheus_remote_write
+        inputs:
+          - controller_metrics
+        endpoint: http://{{ .Values.hypervisor.greptimedbEendpoint }}/v1/prometheus/write?db=public

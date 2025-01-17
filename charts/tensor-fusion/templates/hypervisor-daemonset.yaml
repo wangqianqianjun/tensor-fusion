@@ -54,11 +54,11 @@ spec:
         - name: vector
           image: docker.io/timberio/vector:nightly-2025-01-07-debian
           env:
-            - name: NODE_IP
+            - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   apiVersion: v1
-                  fieldPath: status.hostIP
+                  fieldPath: spec.nodeName
           resources:
             requests:
               cpu: 50m
