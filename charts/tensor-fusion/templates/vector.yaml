@@ -39,16 +39,23 @@ data:
           - prepare_metrics
         all_metrics: true
         metrics: []
+
+      prepare_controller_metrics:
+        type: remap
+        inputs: controller_metrics
+        source: |
+          .namespace = "tf"
+
     sinks:
       sink_greptimedb_hypervisor_metrics:
         type: greptimedb_metrics
         inputs:
           - log_to_metric
         new_naming: false
-        endpoint: {{ .Values.hypervisor.greptimedbEendpoint }}
+        endpoint: {{ .Values.hypervisor.greptimedbEndpoint }}
 
       sink_greptimedb_controller_metrics:
         type: prometheus_remote_write
         inputs:
-          - controller_metrics
-        endpoint: {{ .Values.controller.greptimedbEendpoint }}
+          - prepare_controller_metrics
+        endpoint: {{ .Values.controller.greptimedbEndpoint }}
