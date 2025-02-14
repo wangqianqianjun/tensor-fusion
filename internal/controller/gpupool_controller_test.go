@@ -21,8 +21,10 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
@@ -38,7 +40,10 @@ var _ = Describe("GPUPool Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: "default",
+		}
+		nodeNamespacedName := types.NamespacedName{
+			Name: "test-node",
 		}
 		gpupool := &tfv1.GPUPool{}
 
@@ -55,6 +60,17 @@ var _ = Describe("GPUPool Controller", func() {
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
+
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeNamespacedName.Name,
+					Labels: map[string]string{
+						"mock-label": "true",
+					},
+				},
+				Spec: corev1.NodeSpec{},
+			}
+			Expect(k8sClient.Create(ctx, node)).To(Succeed())
 		})
 
 		AfterEach(func() {
@@ -64,7 +80,15 @@ var _ = Describe("GPUPool Controller", func() {
 
 			By("Cleanup the specific resource instance GPUPool")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			Expect(k8sClient.Delete(ctx, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeNamespacedName.Name,
+				},
+			})).To(Succeed())
+
 		})
+
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &GPUPoolReconciler{
@@ -77,8 +101,7 @@ var _ = Describe("GPUPool Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
 		})
 	})
 })

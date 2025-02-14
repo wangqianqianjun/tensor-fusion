@@ -17,6 +17,8 @@ limitations under the License.
 package v1
 
 import (
+	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -25,54 +27,106 @@ import (
 
 // GPUNodeSpec defines the desired state of GPUNode.
 type GPUNodeSpec struct {
+
+	// +kubebuilder:default=AutoSelect
 	ManageMode GPUNodeManageMode `json:"manageMode,omitempty"`
+
+	// +optional
+	CostPerHour string `json:"costPerHour,omitempty"`
 
 	// if not all GPU cards should be used, specify the GPU card indices, default to empty,
 	// onboard all GPU cards to the pool
+	// +optional
 	GPUCardIndices []int `json:"gpuCardIndices,omitempty"`
 }
 
+// +kubebuilder:validation:Enum=Manual;AutoSelect;Provisioned
 type GPUNodeManageMode string
 
 const (
-	GPUNodeManageModeNone   GPUNodeManageMode = "manual"
-	GPUNodeManageModeAuto   GPUNodeManageMode = "selected"
-	GPUNodeManageModeManual GPUNodeManageMode = "provisioned"
+	GPUNodeManageModeManual      GPUNodeManageMode = "Manual"
+	GPUNodeManageModeAutoSelect  GPUNodeManageMode = "AutoSelect"
+	GPUNodeManageModeProvisioned GPUNodeManageMode = "Provisioned"
 )
 
 // GPUNodeStatus defines the observed state of GPUNode.
 type GPUNodeStatus struct {
-	Phase TensorFusionClusterPhase `json:"phase,omitempty"`
+	// the identifier of the kubernetes node, in nodeSelector mode, GPUNode name is the same as kubernetes node name because of it's owned by the Kubernetes node, while in node provisioning mode owned by the GPUNode, and K8S Node name is uncontrollable
+	KubernetesNodeName string `json:"kubernetesNodeName"`
+
+	// +kubebuilder:default=Pending
+	Phase TensorFusionGPUNodePhase `json:"phase"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	TotalTFlops int32  `json:"totalTFlops,omitempty"`
-	TotalVRAM   string `json:"totalVRAM,omitempty"`
+	TotalTFlops resource.Quantity `json:"totalTFlops"`
+	TotalVRAM   resource.Quantity `json:"totalVRAM"`
 
-	AvailableTFlops int32  `json:"availableTFlops,omitempty"`
-	AvailableVRAM   string `json:"availableVRAM,omitempty"`
+	VirtualTFlops resource.Quantity `json:"virtualTFlops"`
+	VirtualVRAM   resource.Quantity `json:"virtualVRAM"`
+
+	AvailableTFlops resource.Quantity `json:"availableTFlops"`
+	AvailableVRAM   resource.Quantity `json:"availableVRAM"`
 
 	HypervisorStatus NodeHypervisorStatus `json:"hypervisorStatus,omitempty"`
 
 	NodeInfo GPUNodeInfo `json:"nodeInfo,omitempty"`
 
-	LoadedModels []string `json:"loadedModels,omitempty"`
+	LoadedModels []string `json:"loadedModels"`
 
-	TotalGPUs             int32    `json:"totalGPUs,omitempty"`
-	ManagedGPUs           int32    `json:"managedGPUs,omitempty"`
-	ManagedGPUResourceIDs []string `json:"managedGPUResourceIDs,omitempty"`
+	TotalGPUs           int32    `json:"totalGPUs"`
+	ManagedGPUs         int32    `json:"managedGPUs"`
+	ManagedGPUDeviceIDs []string `json:"managedGPUDeviceIDs,omitempty"`
+
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Allocation details is for node compaction, and calculate used apps
+	AllocationDetails []GPUNodeAllocationDetails `json:"allocationDetails"`
 }
 
+type GPUNodeAllocationDetails struct {
+	PodID        string `json:"podID,omitempty"`
+	PodName      string `json:"podName,omitempty"`
+	Namespace    string `json:"namespace"`
+	WorkloadName string `json:"workload,omitempty"`
+
+	Requests GPUResourceUnit `json:"requests"`
+	Limits   GPUResourceUnit `json:"limits"`
+	QoS      string          `json:"qos,omitempty"`
+}
+
+// +kubebuilder:validation:Enum=Pending;Migrating;Running;Succeeded;Failed;Unknown;Destroying
+type TensorFusionGPUNodePhase string
+
+const (
+	TensorFusionGPUNodePhasePending    TensorFusionGPUNodePhase = constants.PhasePending
+	TensorFusionGPUNodePhaseMigrating  TensorFusionGPUNodePhase = constants.PhaseMigrating
+	TensorFusionGPUNodePhaseRunning    TensorFusionGPUNodePhase = constants.PhaseRunning
+	TensorFusionGPUNodePhaseSucceeded  TensorFusionGPUNodePhase = constants.PhaseSucceeded
+	TensorFusionGPUNodePhaseFailed     TensorFusionGPUNodePhase = constants.PhaseFailed
+	TensorFusionGPUNodePhaseUnknown    TensorFusionGPUNodePhase = constants.PhaseUnknown
+	TensorFusionGPUNodePhaseDestroying TensorFusionGPUNodePhase = constants.PhaseDestroying
+)
+
 type GPUNodeInfo struct {
+	// +optional
+	// only set when node is managed by TensorFusion
+	InstanceID string `json:"instanceID,omitempty"`
+	Region     string `json:"region,omitempty"`
+
 	Hostname         string `json:"hostname,omitempty"`
 	IP               string `json:"ip,omitempty"`
-	KernalVersion    string `json:"kernalVersion,omitempty"`
+	KernelVersion    string `json:"kernelVersion,omitempty"`
 	OSImage          string `json:"osImage,omitempty"`
 	GPUDriverVersion string `json:"gpuDriverVersion,omitempty"`
 	GPUModel         string `json:"gpuModel,omitempty"`
 	GPUCount         int32  `json:"gpuCount,omitempty"`
 	OperatingSystem  string `json:"operatingSystem,omitempty"`
 	Architecture     string `json:"architecture,omitempty"`
+
+	// Additional space for L1/L2 VRAM buffer
+	RAMSize      resource.Quantity `json:"ramSize,omitempty"`
+	DataDiskSize resource.Quantity `json:"dataDiskSize,omitempty"`
 }
 
 type NodeHypervisorStatus struct {
@@ -84,7 +138,14 @@ type NodeHypervisorStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
-
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
+// +kubebuilder:printcolumn:name="Total TFlops",type="string",JSONPath=".status.totalTFlops"
+// +kubebuilder:printcolumn:name="Total VRAM",type="string",JSONPath=".status.totalVRAM"
+// +kubebuilder:printcolumn:name="Virtual TFlops",type="string",JSONPath=".status.virtualTFlops"
+// +kubebuilder:printcolumn:name="Virtual VRAM",type="string",JSONPath=".status.virtualVRAM"
+// +kubebuilder:printcolumn:name="Available TFlops",type="string",JSONPath=".status.availableTFlops"
+// +kubebuilder:printcolumn:name="Available VRAM",type="string",JSONPath=".status.availableVRAM"
+// +kubebuilder:printcolumn:name="GPU Count",type="integer",JSONPath=".status.totalGPUs"
 // GPUNode is the Schema for the gpunodes API.
 type GPUNode struct {
 	metav1.TypeMeta   `json:",inline"`

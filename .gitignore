@@ -21,9 +21,15 @@ go.work
 
 # editor and IDE paraphernalia
 .idea
-.vscode
 *.swp
 *.swo
 *~
 
 .DS_Store
+
+cmd/__debug*
+cmd/*/__debug*
+
+prompts/*
+
+tmp*

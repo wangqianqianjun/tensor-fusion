@@ -20,7 +20,9 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -125,6 +127,7 @@ func main() {
 		// this setup is not recommended for production.
 	}
 
+	normalizeKubeConfigEnv()
 	kc := ctrl.GetConfigOrDie()
 	mgr, err := ctrl.NewManager(kc, ctrl.Options{
 		Scheme:                 scheme,
@@ -182,25 +185,39 @@ func main() {
 	}
 
 	if err = (&controller.TensorFusionClusterReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("TensorFusionCluster"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TensorFusionCluster")
 		os.Exit(1)
 	}
-	if err = (&controller.GPUPoolReconciler{
+
+	GPUPoolReconciler := &controller.GPUPoolReconciler{
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Recorder:     mgr.GetEventRecorderFor("GPUPool"),
+		GpuPoolState: gpuPoolState,
+	}
+	if err = GPUPoolReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GPUPool")
+		os.Exit(1)
+	}
+
+	if err = (&controller.GPUNodeReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
 		GpuPoolState: gpuPoolState,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "GPUPool")
+		setupLog.Error(err, "unable to create controller", "controller", "GPUNode")
 		os.Exit(1)
 	}
-	if err = (&controller.GPUNodeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+	if err = (&controller.GPUPoolCompactionReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("GPUPoolCompaction"),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "GPUNode")
+		setupLog.Error(err, "unable to create controller", "controller", "GPUPoolCompaction")
 		os.Exit(1)
 	}
 	if err = (&controller.GPUNodeClassReconciler{
@@ -224,6 +241,15 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)
 	}
+	if err = (&controller.NodeReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		PoolState: gpuPoolState,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Node")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
@@ -258,5 +284,18 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
+	}
+}
+
+// only for local development, won't set KUBECONFIG env var in none local environments
+func normalizeKubeConfigEnv() {
+	cfgPath := os.Getenv("KUBECONFIG")
+	if cfgPath != "" && strings.HasPrefix(cfgPath, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		_ = os.Setenv("KUBECONFIG", strings.Replace(cfgPath, "~", home, 1))
 	}
 }

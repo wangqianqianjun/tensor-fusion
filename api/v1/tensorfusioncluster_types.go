@@ -17,120 +17,159 @@ limitations under the License.
 package v1
 
 import (
+	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // TensorFusionClusterSpec defines the desired state of TensorFusionCluster.
 type TensorFusionClusterSpec struct {
-	Enroll EnrollConfig `json:"enroll,omitempty"`
-
 	GPUPools []GPUPoolDefinition `json:"gpuPools,omitempty"`
 
 	// +optional
-	ComputingVendor ComputingVendorConfig `json:"computingVendor,omitempty"`
+	ComputingVendor *ComputingVendorConfig `json:"computingVendor,omitempty"`
 
 	// +optional
-	StorageVendor StorageVendorConfig `json:"storageVendor,omitempty"`
+	StorageVendor *StorageVendorConfig `json:"storageVendor,omitempty"`
 
 	// +optional
-	DataPipelines DataPipelinesConfig `json:"dataPipelines,omitempty"`
+	DataPipelines *DataPipelinesConfig `json:"dataPipelines,omitempty"`
 }
 
 // TensorFusionClusterStatus defines the observed state of TensorFusionCluster.
 type TensorFusionClusterStatus struct {
 
-	// +kubebuilder:default:=Initializing
+	// +kubebuilder:default=Pending
 	Phase TensorFusionClusterPhase `json:"phase,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	TotalPools int32 `json:"totalPools,omitempty"`
-	TotalNodes int32 `json:"totalNodes,omitempty"`
-	TotalGPUs  int32 `json:"totalGPUs,omitempty"`
+	TotalPools int32 `json:"totalPools"`
+	TotalNodes int32 `json:"totalNodes"`
+	TotalGPUs  int32 `json:"totalGPUs"`
 
-	TotalTFlops int32  `json:"totalTFlops,omitempty"`
-	TotalVRAM   string `json:"totalVRAM,omitempty"`
+	TotalTFlops resource.Quantity `json:"totalTFlops"`
+	TotalVRAM   resource.Quantity `json:"totalVRAM"`
 
-	AvailableTFlops int32  `json:"availableTFlops,omitempty"`
-	AvailableVRAM   string `json:"availableVRAM,omitempty"`
+	VirtualTFlops resource.Quantity `json:"virtualTFlops"`
+	VirtualVRAM   resource.Quantity `json:"virtualVRAM"`
 
-	ReadyGPUPools    []string `json:"readyGPUPools,omitempty"`
-	NotReadyGPUPools []string `json:"notReadyGPUPools,omitempty"`
+	AvailableTFlops resource.Quantity `json:"availableTFlops"`
+	AvailableVRAM   resource.Quantity `json:"availableVRAM"`
 
-	AvailableLicenses  int32       `json:"availableLicenses,omitempty"`
-	TotalLicenses      int32       `json:"totalLicenses,omitempty"`
-	LicenseRenewalTime metav1.Time `json:"licenseRenewalTime,omitempty"`
+	// +optional
+	ReadyGPUPools []string `json:"readyGPUPools"`
 
-	CloudConnectionStatus ClusterCloudConnectionStatus `json:"cloudConnectionStatus,omitempty"`
-	StorageStatus         ClusterStorageStatus         `json:"storageStatus,omitempty"`
-	ComputingVendorStatus ClusterComputingVendorStatus `json:"computingVendorStatus,omitempty"`
+	// +optional
+	NotReadyGPUPools []string `json:"notReadyGPUPools"`
+
+	// +kubebuilder:default=0
+	//
+	RetryCount int64 `json:"retryCount"`
+
+	// calculated every 5m average
+	UtilizedTFlopsPercent string `json:"utilizedTFlopsPercent,omitempty"`
+	UtilizedVRAMPercent   string `json:"utilizedVRAMPercent,omitempty"`
+
+	// updated with interval
+	AllocatedTFlopsPercent string `json:"allocatedTFlopsPercent,omitempty"`
+	AllocatedVRAMPercent   string `json:"allocatedVRAMPercent,omitempty"`
+
+	// aggregated with interval
+	SavedCostsPerMonth       string `json:"savedCostsPerMonth,omitempty"`
+	PotentialSavingsPerMonth string `json:"potentialSavingsPerMonth,omitempty"`
+
+	CloudVendorConfigHash string `json:"cloudVendorConfigHash,omitempty"`
 }
 
-type ClusterCloudConnectionStatus struct {
-	ClusterID         string      `json:"clusterId,omitempty"`
-	ConnectionState   string      `json:"connectionState,omitempty"`
-	LastHeartbeatTime metav1.Time `json:"lastHeartbeatTime,omitempty"`
-}
-
-type ClusterStorageStatus struct {
-	ConnectionState string `json:"connectionState,omitempty"`
-}
-
-type ClusterComputingVendorStatus struct {
-	ConnectionState string `json:"connectionState,omitempty"`
-}
-
+// +kubebuilder:validation:Enum=Pending;Running;Updating;Destroying;Unknown
 // TensorFusionClusterPhase represents the phase of the TensorFusionCluster resource.
 type TensorFusionClusterPhase string
 
 const (
-	TensorFusionClusterInitializing = TensorFusionClusterPhase("Initializing")
-	TensorFusionClusterRunning      = TensorFusionClusterPhase("Running")
-	TensorFusionClusterUpdating     = TensorFusionClusterPhase("Updating")
-	TensorFusionClusterDestroying   = TensorFusionClusterPhase("Destroying")
+	TensorFusionClusterPending    = TensorFusionClusterPhase(constants.PhasePending)
+	TensorFusionClusterRunning    = TensorFusionClusterPhase(constants.PhaseRunning)
+	TensorFusionClusterUpdating   = TensorFusionClusterPhase(constants.PhaseUpdating)
+	TensorFusionClusterDestroying = TensorFusionClusterPhase(constants.PhaseDestroying)
+	TensorFusionClusterUnknown    = TensorFusionClusterPhase(constants.PhaseUnknown)
 )
-
-// Enroll to TensorFusion cloud with a enrollment key
-type EnrollConfig struct {
-	APIEndpoint string              `json:"apiEndpoint,omitempty"` // API endpoint for enrollment.
-	EnrollKey   EnrollmentKeyConfig `json:"enrollKey,omitempty"`
-}
-
-type EnrollmentKeyConfig struct {
-	Data      string        `json:"data,omitempty"` // Enrollment key data.
-	SecretRef NameNamespace `json:"secretRef,omitempty"`
-}
 
 // GPUPool defines how to create a GPU pool, could be URL or inline
 type GPUPoolDefinition struct {
 	Name string `json:"name,omitempty"` // Name of the GPU pool.
 
-	// +optional
-	Spec GPUPoolSpec `json:"spec,omitempty"`
-
-	// +optional
-	SpecTemplateURL string `json:"specTemplateUrl,omitempty"`
+	SpecTemplate GPUPoolSpec `json:"specTemplate"`
 }
 
 // ComputingVendorConfig defines the Cloud vendor connection such as AWS, GCP, Azure etc.
 type ComputingVendorConfig struct {
-	Name     string `json:"name,omitempty"`     // Name of the computing vendor.
-	Type     string `json:"type,omitempty"`     // Type of the computing vendor (e.g., aws, lambdalabs, gcp, azure, together.ai).
-	AuthType string `json:"authType,omitempty"` // Authentication type (e.g., accessKey, serviceAccount).
+	Name string `json:"name,omitempty"`
+
+	// support popular cloud providers
+	Type ComputingVendorName `json:"type,omitempty"`
+
+	AuthType AuthTypeEnum `json:"authType,omitempty"` // Authentication type (e.g., accessKey, serviceAccount).
 
 	// +optional
+	// +kubebuilder:default=true
 	Enable *bool `json:"enable,omitempty"` // Enable or disable the computing vendor.
 
-	GPUNodeControllerType string                `json:"gpuNodeControllerType,omitempty"` // Type of GPU node controller (e.g., asg, karpenter, native).
-	Params                ComputingVendorParams `json:"params,omitempty"`
+	Params ComputingVendorParams `json:"params,omitempty"`
 }
 
+// +kubebuilder:validation:Enum=accessKey;serviceAccountRole
+type AuthTypeEnum string
+
+const (
+	AuthTypeAccessKey          AuthTypeEnum = "accessKey"
+	AuthTypeServiceAccountRole AuthTypeEnum = "serviceAccountRole"
+)
+
+// +kubebuilder:validation:Enum=aws;lambda-labs;gcp;azure;oracle-oci;ibm;openshift;vultr;together-ai;aliyun;nvidia;tencent;runpod;mock
+type ComputingVendorName string
+
+const (
+	ComputingVendorAWS        ComputingVendorName = "aws"
+	ComputingVendorGCP        ComputingVendorName = "gcp"
+	ComputingVendorAzure      ComputingVendorName = "azure"
+	ComputingVendorOracle     ComputingVendorName = "oracle-oci"
+	ComputingVendorIBM        ComputingVendorName = "ibm"
+	ComputingVendorOpenShift  ComputingVendorName = "openshift"
+	ComputingVendorVultr      ComputingVendorName = "vultr"
+	ComputingVendorTogetherAI ComputingVendorName = "together-ai"
+	ComputingVendorLambdaLabs ComputingVendorName = "lambda-labs"
+	ComputingVendorAliyun     ComputingVendorName = "aliyun"
+	ComputingVendorNvidia     ComputingVendorName = "nvidia"
+	ComputingVendorTencent    ComputingVendorName = "tencent"
+	ComputingVendorRunPod     ComputingVendorName = "runpod"
+
+	// This is not unit/integration testing only, no cloud provider is involved
+	ComputingVendorMock ComputingVendorName = "mock"
+)
+
 type ComputingVendorParams struct {
-	Region    string `json:"region,omitempty"`    // Region for the computing vendor.
-	AccessKey string `json:"accessKey,omitempty"` // Access key for the computing vendor.
-	SecretKey string `json:"secretKey,omitempty"` // Secret key for the computing vendor.
-	IAMRole   string `json:"iamRole,omitempty"`   // IAM role for the computing vendor like AWS
+	// +optional
+	DefaultRegion string `json:"defaultRegion,omitempty"` // Region for the computing vendor.
+
+	// the secret of access key and secret key or config file, must be mounted as file path
+	// +optional
+	AccessKeyPath string `json:"accessKeyPath,omitempty"`
+	// +optional
+	SecretKeyPath string `json:"secretKeyPath,omitempty"`
+
+	// preferred IAM role since it's more secure
+	// +optional
+	IAMRole string `json:"iamRole,omitempty"`
+
+	// +optional
+	ConfigFile string `json:"configFile,omitempty"`
+
+	// +optional
+	// User can set extra cloud vendor params, eg.
+	// in ali cloud:" spotPriceLimit, spotDuration, spotInterruptionBehavior, systemDiskCategory, systemDiskSize, dataDiskPerformanceLevel
+	// in aws cloud: TODO
+	ExtraParams map[string]string `json:"extraParams,omitempty"`
 }
 
 // StorageVendorConfig defines Postgres database with extensions for timeseries storage and other resource aggregation results, system events and diagnostics reports etc.
@@ -182,7 +221,15 @@ type DataPipelineResultRemoteWriteConfig struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
+// +kubebuilder:printcolumn:name="Total Pools",type="string",JSONPath=".status.totalPools"
+// +kubebuilder:printcolumn:name="Total Nodes",type="string",JSONPath=".status.totalNodes"
+// +kubebuilder:printcolumn:name="Total GPU",type="string",JSONPath=".status.totalGPUs"
 
+// +kubebuilder:printcolumn:name="Total Tflops",type="string",JSONPath=".status.totalTFlops"
+// +kubebuilder:printcolumn:name="Total VRAM",type="string",JSONPath=".status.totalVRAM"
+// +kubebuilder:printcolumn:name="Available Tflops",type="string",JSONPath=".status.availableTFlops"
+// +kubebuilder:printcolumn:name="Available VRAM",type="string",JSONPath=".status.availableVRAM"
 // TensorFusionCluster is the Schema for the tensorfusionclusters API.
 type TensorFusionCluster struct {
 	metav1.TypeMeta   `json:",inline"`
