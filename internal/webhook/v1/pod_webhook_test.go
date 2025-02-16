@@ -33,7 +33,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
@@ -53,12 +52,10 @@ var _ = Describe("TensorFusionPodMutator", func() {
 		Expect(tfv1.AddToScheme(scheme)).To(Succeed())
 
 		decoder = admission.NewDecoder(scheme)
-		client = fake.NewClientBuilder().WithScheme(scheme).Build()
+		client = k8sClient
 
-		mockGpuPoolState := config.NewMockGpuPoolState()
 		mutator = &TensorFusionPodMutator{
-			Client:    client,
-			PoolState: mockGpuPoolState,
+			Client: client,
 		}
 		Expect(mutator.InjectDecoder(decoder)).To(Succeed())
 	})
@@ -69,6 +66,9 @@ var _ = Describe("TensorFusionPodMutator", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
 					Namespace: "default",
+					Labels: map[string]string{
+						constants.TensorFusionEnabledLabelKey: "true",
+					},
 					Annotations: map[string]string{
 						constants.GpuPoolAnnotationKey:                               "mock",
 						fmt.Sprintf(constants.TFLOPSRequestAnnotationFormat, "main"): "10",
@@ -195,8 +195,7 @@ var _ = Describe("TensorFusionPodMutator", func() {
 					},
 				},
 			}
-			mockGpuPoolState := config.NewMockGpuPoolState()
-			_, resources := ParseTFResources(mockGpuPoolState, pod)
+			_, resources := ParseTFResources(pod)
 			Expect(resources).To(HaveLen(1))
 			Expect(resources[0].ContainerName).To(Equal("test-container"))
 			Expect(resources[0].TflopsRequest.String()).To(Equal("10"))
@@ -217,9 +216,8 @@ var _ = Describe("TensorFusionPodMutator", func() {
 					},
 				},
 			}
-			mockGpuPoolState := config.NewMockGpuPoolState()
-			pool := mockGpuPoolState.Get("mock")
-			patch, err := mutator.patchTFClient(pod, pool.ComponentConfig.Client, []TFResource{{ContainerName: "test-container", TflopsRequest: resource.MustParse("100"), VramRequest: resource.MustParse("16Gi")}})
+
+			patch, err := mutator.patchTFClient(pod, config.MockGPUPoolSpec.ComponentConfig.Client, []TFResource{{ContainerName: "test-container", TflopsRequest: resource.MustParse("100"), VramRequest: resource.MustParse("16Gi")}})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(patch).NotTo(BeEmpty())
 			Expect(patch).To(HaveLen(2))

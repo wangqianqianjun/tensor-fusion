@@ -33,7 +33,7 @@ func init() {
 			MemoryGiB: 15,
 
 			FP16TFlopsPerGPU:    65,
-			VRAMGigabytesPerGPU: 16,
+			VRAMGigabytesPerGPU: 15,
 
 			GPUModel:        "NVIDIA T4",
 			GPUCount:        1,
@@ -49,7 +49,7 @@ func init() {
 			MemoryGiB: 31,
 
 			FP16TFlopsPerGPU:    65,
-			VRAMGigabytesPerGPU: 16,
+			VRAMGigabytesPerGPU: 15,
 
 			GPUModel:        "NVIDIA T4",
 			GPUCount:        1,
@@ -65,7 +65,7 @@ func init() {
 			MemoryGiB: 60,
 
 			FP16TFlopsPerGPU:    65,
-			VRAMGigabytesPerGPU: 16,
+			VRAMGigabytesPerGPU: 15,
 
 			GPUModel:        "NVIDIA T4",
 			GPUCount:        1,
@@ -79,11 +79,11 @@ func init() {
 	}
 }
 
-func (p AliyunGPUNodeProvider) GetGPUNodeInstanceTypeInfo(region string) []types.GPUNodeInstanceInfo {
+func (p AlibabaGPUNodeProvider) GetGPUNodeInstanceTypeInfo(region string) []types.GPUNodeInstanceInfo {
 	return GPUInstanceTypeInfo
 }
 
-func (p AliyunGPUNodeProvider) GetInstancePricing(instanceType string, region string, capacityType types.CapacityTypeEnum) (float64, error) {
+func (p AlibabaGPUNodeProvider) GetInstancePricing(instanceType string, region string, capacityType types.CapacityTypeEnum) (float64, error) {
 	discountRatio := 1.0
 	if ratio, ok := RegionCostDifferenceRatio[region]; ok {
 		discountRatio = ratio

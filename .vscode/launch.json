@@ -15,6 +15,17 @@
             "program": "${workspaceFolder}/cmd/operator/main.go",
         },
         {
+            "name": "Debug Discovery",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "env": {
+                "HOSTNAME": "mocknode",
+                "KUBECONFIG": "~/.kube/config",
+            },
+            "program": "${workspaceFolder}/cmd/nodediscovery/main.go",
+        },
+        {
             "name": "Debug Dev Env Operator",
             "type": "go",
             "request": "launch",

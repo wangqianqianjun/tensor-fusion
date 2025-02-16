@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,6 +35,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	// +kubebuilder:scaffold:imports
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apimachineryruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -95,6 +97,8 @@ var _ = BeforeSuite(func() {
 	err = corev1.AddToScheme(scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	Expect(tfv1.AddToScheme(scheme)).NotTo(HaveOccurred())
+
 	err = admissionv1.AddToScheme(scheme)
 	Expect(err).NotTo(HaveOccurred())
 
@@ -103,6 +107,14 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+
+	pool := &tfv1.GPUPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "mock",
+		},
+		Spec: *config.MockGPUPoolSpec,
+	}
+	Expect(k8sClient.Create(ctx, pool)).To(Succeed())
 
 	// start webhook server using Manager.
 	webhookInstallOptions := &testEnv.WebhookInstallOptions
@@ -118,8 +130,7 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	mockGpuPoolState := config.NewMockGpuPoolState()
-	err = SetupPodWebhookWithManager(mgr, mockGpuPoolState)
+	err = SetupPodWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:webhook

@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
-	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/utils"
 	. "github.com/onsi/ginkgo/v2"
@@ -60,6 +59,9 @@ var _ = Describe("GPUNode Controller", func() {
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				resource.Status.KubernetesNodeName = resource.Name
+				resource.Status.Phase = tfv1.TensorFusionGPUNodePhaseRunning
+				Expect(k8sClient.Status().Update(ctx, resource)).To(Succeed())
 			}
 		})
 
@@ -75,9 +77,8 @@ var _ = Describe("GPUNode Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &GPUNodeReconciler{
-				Client:       k8sClient,
-				Scheme:       k8sClient.Scheme(),
-				GpuPoolState: config.NewMockGpuPoolState(),
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -100,7 +101,7 @@ var _ = Describe("GPUNode Controller", func() {
 			By("Verify the hypervisor pod is created")
 			pod := &corev1.Pod{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name:      fmt.Sprintf("%s-%s-hypervisor", "mock", gpunode.Name),
+				Name:      fmt.Sprintf("hypervisor-%s", gpunode.Name),
 				Namespace: utils.CurrentNamespace(),
 			}, pod)).To(Succeed())
 		})

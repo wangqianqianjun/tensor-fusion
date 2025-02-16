@@ -22,7 +22,7 @@ import (
 	"time"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
-	"github.com/NexusGPU/tensor-fusion-operator/internal/config"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
 	utils "github.com/NexusGPU/tensor-fusion-operator/internal/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -38,9 +38,9 @@ import (
 // GPUPoolReconciler reconciles a GPUPool object
 type GPUPoolReconciler struct {
 	client.Client
-	GpuPoolState config.GpuPoolState
-	Scheme       *runtime.Scheme
-	Recorder     record.EventRecorder
+
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpupools,verbs=get;list;watch;create;update;patch;delete
@@ -60,14 +60,12 @@ func (r *GPUPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	pool := &tfv1.GPUPool{}
 	if err := r.Get(ctx, req.NamespacedName, pool); err != nil {
 		if errors.IsNotFound(err) {
-			r.GpuPoolState.Delete(pool.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
 	deleted, err := utils.HandleFinalizer(ctx, pool, r.Client, func(ctx context.Context, pool *tfv1.GPUPool) error {
-		r.GpuPoolState.Delete(pool.Name)
 		// TODO: stop all existing workers and hypervisors, stop time series flow aggregations
 		return nil
 	})
@@ -79,15 +77,12 @@ func (r *GPUPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Update pool capacity at first
-	if err := r.reconcilePoolCurrentCapacityAndReadiness(ctx, pool); err != nil {
+	if err := r.reconcilePoolCurrentCapacityAndReadiness(ctx, pool.Name); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	// For provisioning mode, check if need to scale up GPUNodes upon AvailableCapacity changed
 	isProvisioningMode := pool.Spec.NodeManagerConfig.ProvisioningMode == tfv1.ProvisioningModeProvisioned
-
-	// sync the GPU Pool into memory, used by scheduler and mutation webhook
-	r.GpuPoolState.Set(pool.Name, &pool.Spec)
 
 	// Provisioning mode, check capacity and scale up if needed
 	if isProvisioningMode {
@@ -99,7 +94,7 @@ func (r *GPUPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		if newNodeCreated {
 			// Refresh the capacity again since new node has been created
 			pool.Status.Phase = tfv1.TensorFusionPoolPhaseUpdating
-			if err := r.reconcilePoolCurrentCapacityAndReadiness(ctx, pool); err != nil {
+			if err := r.reconcilePoolCurrentCapacityAndReadiness(ctx, pool.Name); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
@@ -115,11 +110,15 @@ func (r *GPUPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-func (r *GPUPoolReconciler) reconcilePoolCurrentCapacityAndReadiness(ctx context.Context, pool *tfv1.GPUPool) error {
+func (r *GPUPoolReconciler) reconcilePoolCurrentCapacityAndReadiness(ctx context.Context, poolName string) error {
 	log := log.FromContext(ctx)
 
+	var pool tfv1.GPUPool
+	if err := r.Get(ctx, client.ObjectKey{Name: poolName}, &pool); err != nil {
+		return fmt.Errorf("get pool %s failed: %v", poolName, err)
+	}
 	nodes := &tfv1.GPUNodeList{}
-	if err := r.Client.List(ctx, nodes); err != nil {
+	if err := r.Client.List(ctx, nodes, client.MatchingLabels{constants.LabelKeyOwner: poolName}); err != nil {
 		return fmt.Errorf("list nodes of Pool %s failed: %v", pool.Name, err)
 	}
 
@@ -162,7 +161,7 @@ func (r *GPUPoolReconciler) reconcilePoolCurrentCapacityAndReadiness(ctx context
 		pool.Status.Phase = tfv1.TensorFusionPoolPhasePending
 	}
 
-	if err := r.Client.Status().Update(ctx, pool); err != nil {
+	if err := r.Client.Status().Patch(ctx, &pool, client.Merge); err != nil {
 		return fmt.Errorf("update pool status: %w", err)
 	}
 	return nil
