@@ -24,6 +24,7 @@ import (
 
 	tfv1 "github.com/NexusGPU/tensor-fusion-operator/api/v1"
 	"github.com/NexusGPU/tensor-fusion-operator/internal/constants"
+	"github.com/NexusGPU/tensor-fusion-operator/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -33,8 +34,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	schedulingcorev1 "k8s.io/component-helpers/scheduling/corev1"
 )
@@ -95,7 +99,14 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			return ctrl.Result{}, err
 		}
 		if !matched {
-			log.Info("No matched GPU pool found, skip reconcile the Node", "node", node.Name, "labels", node.Labels)
+			// delete gpunode if no matched pool
+			if err := r.Client.Delete(ctx, &tfv1.GPUNode{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: node.Name,
+				},
+			}); err != nil {
+				return ctrl.Result{}, fmt.Errorf("can not delete gpuNode(%s) : %w", node.Name, err)
+			}
 			return ctrl.Result{}, nil
 		}
 
@@ -169,11 +180,36 @@ func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if err != nil {
 		return fmt.Errorf("unable to create predicate: %w", err)
 	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Node{}, builder.WithPredicates(p)).
 		Named("node").
+		Watches(&tfv1.GPUPool{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+			nodelist := &tfv1.GPUNodeList{}
+			if err := mgr.GetClient().List(ctx, nodelist, client.MatchingLabels{
+				selectors[0]: selectors[1],
+			}); err != nil {
+				log.FromContext(ctx).Error(err, "failed to list GPUNode")
+				return []reconcile.Request{}
+			}
+			var requests []reconcile.Request
+			for _, n := range nodelist.Items {
+				requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Name: n.Name}})
+			}
+			return requests
+		}), builder.WithPredicates(predicate.Funcs{
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				oldObj, ok1 := e.ObjectOld.(*tfv1.GPUPool)
+				newObj, ok2 := e.ObjectNew.(*tfv1.GPUPool)
+				if !ok1 || !ok2 {
+					return false
+				}
+				oldNodeSelector := oldObj.Spec.NodeManagerConfig.NodeSelector
+				newNodeSelector := newObj.Spec.NodeManagerConfig.NodeSelector
+				return utils.GetObjectHash(oldNodeSelector) != utils.GetObjectHash(newNodeSelector)
+			},
+		})).
 		Complete(r)
-	// TODO: When Pool changed, all nodes should re-generated, delete not matched ones, this logic should be added into GPUPool controller
 }
 
 func getMatchedPoolName(node *corev1.Node, poolList []tfv1.GPUPool) (*tfv1.GPUPool, bool, error) {
