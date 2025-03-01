@@ -35,6 +35,10 @@ type Resources struct {
 type TensorFusionConnectionSpec struct {
 	PoolName  string    `json:"poolName"`
 	Resources Resources `json:"resources"`
+
+	// +optional
+	// localGpu mode will schedule the GPU in advance
+	GPUs []string `json:"gpu"`
 }
 
 type TensorFusionConnectionPhase string
@@ -50,7 +54,7 @@ const (
 type TensorFusionConnectionStatus struct {
 	Phase         TensorFusionConnectionPhase `json:"phase"`
 	ConnectionURL string                      `json:"connectionURL"`
-	QosClass      string                      `json:"qosClass,omitempty"`
+	QoS           QoSLevel                    `json:"qos,omitempty"`
 	GPU           string                      `json:"gpu,omitempty"`
 }
 

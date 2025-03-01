@@ -79,20 +79,34 @@ func (r *TensorFusionConnectionReconciler) Reconcile(ctx context.Context, req ct
 	var gpu *tfv1.GPU
 	// If status is not set or pending, try to schedule
 	if connection.Status.Phase == "" || connection.Status.Phase == tfv1.TensorFusionConnectionPending {
-		// Try to get an available gpu from scheduler
-		var err error
-		gpu, err = r.Scheduler.Schedule(ctx, connection.Spec.PoolName, connection.Spec.Resources.Requests)
-		if err != nil {
-			log.Error(err, "Failed to schedule gpu instance")
-			connection.Status.Phase = tfv1.TensorFusionConnectionPending
-		} else if gpu != nil {
-			connection.Status.Phase = tfv1.TensorFusionConnectionStarting
+		if len(connection.Spec.GPUs) > 0 {
+
+			// local gpu mode
+			gpu = &tfv1.GPU{}
+			// Here we only take the 0th GPU temporarily. will support multi-GPU mode in the future.
+			if err := r.Get(ctx, client.ObjectKey{Name: connection.Spec.GPUs[0]}, gpu); err != nil {
+				return ctrl.Result{}, fmt.Errorf("get gpu(%s) : %w", connection.Spec.GPUs[0], err)
+			}
 			// Store the gpu name for cleanup
 			connection.Status.GPU = gpu.Name
+			connection.Status.Phase = tfv1.TensorFusionConnectionStarting
 		} else {
-			// Init status
-			connection.Status.Phase = tfv1.TensorFusionConnectionPending
+			// Try to get an available gpu from scheduler
+			var err error
+			gpu, err = r.Scheduler.Schedule(ctx, connection.Spec.PoolName, connection.Spec.Resources.Requests)
+			if err != nil {
+				log.Error(err, "Failed to schedule gpu instance")
+				connection.Status.Phase = tfv1.TensorFusionConnectionPending
+			} else if gpu != nil {
+				connection.Status.Phase = tfv1.TensorFusionConnectionStarting
+				// Store the gpu name for cleanup
+				connection.Status.GPU = gpu.Name
+			} else {
+				// Init status
+				connection.Status.Phase = tfv1.TensorFusionConnectionPending
+			}
 		}
+
 	}
 
 	// check schedule result
