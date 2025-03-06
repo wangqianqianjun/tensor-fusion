@@ -22,8 +22,9 @@ const (
 	InitialGPUNodeSelector      = "nvidia.com/gpu.present=true"
 
 	GPULastReportTimeAnnotationKey = Domain + "/last-sync"
-
-	GpuPoolKey = Domain + "/gpupool"
+	WorkloadKey                    = Domain + "/workload"
+	GpuKey                         = Domain + "/gpu"
+	GpuPoolKey                     = Domain + "/gpupool"
 
 	// Annotation key constants
 
@@ -33,7 +34,8 @@ const (
 	VRAMLimitAnnotation       = Domain + "/vram-limit"
 	ClientProfileAnnotation   = Domain + "/client-profile"
 	InjectContainerAnnotation = Domain + "/inject-container"
-	GPUAnnotation             = Domain + "/gpu"
+	ReplicasAnnotation        = Domain + "/replicas"
+	GenWorkload               = Domain + "/generate-workload"
 
 	PendingRequeueDuration = time.Second * 3
 	StatusCheckInterval    = time.Second * 6

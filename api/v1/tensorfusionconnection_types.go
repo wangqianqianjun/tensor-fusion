@@ -33,29 +33,14 @@ type Resources struct {
 
 // TensorFusionConnectionSpec defines the desired state of TensorFusionConnection.
 type TensorFusionConnectionSpec struct {
-	PoolName  string    `json:"poolName"`
-	Resources Resources `json:"resources"`
-
-	// +optional
-	// localGpu mode will schedule the GPU in advance
-	GPUs []string `json:"gpu"`
+	WorkloadName string `json:"workloadName"`
 }
-
-type TensorFusionConnectionPhase string
-
-// These are the valid phases of a GpuConnection.
-const (
-	TensorFusionConnectionPending  TensorFusionConnectionPhase = "Pending"
-	TensorFusionConnectionStarting TensorFusionConnectionPhase = "Starting"
-	TensorFusionConnectionRunning  TensorFusionConnectionPhase = "Running"
-)
 
 // TensorFusionConnectionStatus defines the observed state of TensorFusionConnection.
 type TensorFusionConnectionStatus struct {
-	Phase         TensorFusionConnectionPhase `json:"phase"`
-	ConnectionURL string                      `json:"connectionURL"`
-	QoS           QoSLevel                    `json:"qos,omitempty"`
-	GPU           string                      `json:"gpu,omitempty"`
+	Phase         WorkerPhase `json:"phase"`
+	ConnectionURL string      `json:"connectionURL"`
+	WorkerName    string      `json:"workerName"`
 }
 
 // +kubebuilder:object:root=true

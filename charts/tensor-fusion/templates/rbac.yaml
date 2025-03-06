@@ -93,6 +93,8 @@ rules:
   - schedulingconfigtemplates
   - tensorfusionclusters
   - tensorfusionconnections
+  - tensorfusionworkloads
+  - clientprofiles
   verbs:
   - create
   - delete
@@ -109,8 +111,8 @@ rules:
   - gpupools/finalizers
   - gpus/finalizers
   - schedulingconfigtemplates/finalizers
-  - tensorfusionclusters/finalizers
   - tensorfusionconnections/finalizers
+  - tensorfusionworkloads/finalizers
   verbs:
   - update
 - apiGroups:
@@ -123,6 +125,8 @@ rules:
   - schedulingconfigtemplates/status
   - tensorfusionclusters/status
   - tensorfusionconnections/status
+  - tensorfusionworkloads/status
+  - clientprofiles/status
   verbs:
   - get
   - patch

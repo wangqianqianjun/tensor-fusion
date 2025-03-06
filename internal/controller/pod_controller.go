@@ -60,14 +60,13 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		log.Error(err, "Failed to get Pod")
 		return ctrl.Result{}, err
 	}
-	profile, containerNames, err := webhookv1.ParseTFResources(ctx, r.Client, pod)
+	tfInfo, err := webhookv1.ParseTensorFusionInfo(ctx, r.Client, pod)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("parse tf resources: %w", err)
 	}
 
 	// generate tensor fusion connections and apply to cluster
-	tfConnection := generateTensorFusionConnection(pod, profile, containerNames)
-
+	tfConnection := generateTensorFusionConnection(pod)
 	existConn := &tfv1.TensorFusionConnection{}
 	if err := r.Get(ctx, types.NamespacedName{Name: tfConnection.Name, Namespace: tfConnection.Namespace}, existConn); err != nil {
 		if errors.IsNotFound(err) {
@@ -78,28 +77,34 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	// update metrics
-	for _, container := range containerNames {
+	for _, container := range tfInfo.ContainerNames {
 		labels := prometheus.Labels{
 			"pod":       pod.Name,
 			"namespace": pod.Namespace,
 			"container": container,
 		}
-		metrics.GpuTflopsRequest.With(labels).Set(profile.Resources.Requests.Tflops.AsApproximateFloat64())
-		metrics.GpuTflopsLimit.With(labels).Set(profile.Resources.Limits.Tflops.AsApproximateFloat64())
-		metrics.VramBytesRequest.With(labels).Set(profile.Resources.Requests.Vram.AsApproximateFloat64())
-		metrics.VramBytesLimit.With(labels).Set(profile.Resources.Limits.Vram.AsApproximateFloat64())
+		metrics.GpuTflopsRequest.With(labels).Set(tfInfo.Profile.Resources.Requests.Tflops.AsApproximateFloat64())
+		metrics.GpuTflopsLimit.With(labels).Set(tfInfo.Profile.Resources.Limits.Tflops.AsApproximateFloat64())
+		metrics.VramBytesRequest.With(labels).Set(tfInfo.Profile.Resources.Requests.Vram.AsApproximateFloat64())
+		metrics.VramBytesLimit.With(labels).Set(tfInfo.Profile.Resources.Limits.Vram.AsApproximateFloat64())
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func generateTensorFusionConnection(pod *corev1.Pod, profile *tfv1.ClientProfileSpec, containerNames []string) *tfv1.TensorFusionConnection {
-	connectionNameNamespace := findConnectionNameNamespace(pod, containerNames)
-
+func generateTensorFusionConnection(pod *corev1.Pod) *tfv1.TensorFusionConnection {
+	workloadName, ok := pod.Annotations[constants.WorkloadKey]
+	if !ok {
+		return nil
+	}
+	nameNamespace := findConnectionNameNamespace(pod)
 	connection := &tfv1.TensorFusionConnection{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      connectionNameNamespace.Name,
-			Namespace: connectionNameNamespace.Namespace,
+			Name:      nameNamespace.Name,
+			Namespace: nameNamespace.Namespace,
+			Labels: map[string]string{
+				constants.WorkloadKey: workloadName,
+			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion: "v1",
@@ -110,13 +115,8 @@ func generateTensorFusionConnection(pod *corev1.Pod, profile *tfv1.ClientProfile
 			},
 		},
 		Spec: tfv1.TensorFusionConnectionSpec{
-			PoolName:  profile.PoolName,
-			Resources: profile.Resources,
+			WorkloadName: workloadName,
 		},
-	}
-	gpuName, ok := pod.Annotations[constants.GPUAnnotation]
-	if ok {
-		connection.Spec.GPUs = []string{gpuName}
 	}
 	return connection
 }
@@ -138,16 +138,10 @@ func (r *PodReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // findConnectionNameNamespace extracts the connection name and namespace from the container's environment variables
-func findConnectionNameNamespace(pod *corev1.Pod, containerNames []string) client.ObjectKey {
+func findConnectionNameNamespace(pod *corev1.Pod) client.ObjectKey {
 	connectionNameNamespace := client.ObjectKey{}
 
-	for _, containerName := range containerNames {
-		container, ok := lo.Find(pod.Spec.Containers, func(c corev1.Container) bool {
-			return c.Name == containerName
-		})
-		if !ok {
-			continue
-		}
+	for _, container := range pod.Spec.Containers {
 		connectionName, ok := lo.Find(container.Env, func(env corev1.EnvVar) bool {
 			return env.Name == constants.ConnectionNameEnv
 		})
@@ -162,7 +156,7 @@ func findConnectionNameNamespace(pod *corev1.Pod, containerNames []string) clien
 		}
 		connectionNameNamespace.Name = connectionName.Value
 		connectionNameNamespace.Namespace = connectionNamespace.Value
+		break
 	}
-
 	return connectionNameNamespace
 }
