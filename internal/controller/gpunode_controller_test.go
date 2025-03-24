@@ -18,13 +18,16 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/samber/lo"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -117,6 +120,31 @@ var _ = Describe("GPUNode Controller", func() {
 				Name:      fmt.Sprintf("hypervisor-%s", gpunode.Name),
 				Namespace: utils.CurrentNamespace(),
 			}, pod)).To(Succeed())
+
+			By("Verify the hypervior pod recreated after hypervisor config change")
+			pool := &tfv1.GPUPool{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "mock",
+				Namespace: "default",
+			}, pool)).To(Succeed())
+			podTmpl := &corev1.PodTemplate{}
+			err = json.Unmarshal(pool.Spec.ComponentConfig.Hypervisor.PodTemplate.Raw, podTmpl)
+			Expect(err).NotTo(HaveOccurred())
+			podTmpl.Template.Spec.Containers[0].Name = "foo"
+			pool.Spec.ComponentConfig.Hypervisor.PodTemplate.Raw = lo.Must(json.Marshal(podTmpl))
+			Expect(k8sClient.Update(ctx, pool)).To(Succeed())
+			Eventually(func() string {
+				_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				if err = k8sClient.Get(ctx, types.NamespacedName{
+					Name:      fmt.Sprintf("hypervisor-%s", gpunode.Name),
+					Namespace: utils.CurrentNamespace(),
+				}, pod); err != nil {
+					return ""
+				}
+				return pod.Spec.Containers[0].Name
+			}, 5*time.Second, time.Second).Should(Equal("foo"))
 		})
 	})
 })

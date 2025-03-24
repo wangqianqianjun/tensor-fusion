@@ -368,19 +368,59 @@ func (r *GPUNodeReconciler) reconcileNodeDiscoveryJob(
 }
 
 func (r *GPUNodeReconciler) reconcileHypervisorPod(ctx context.Context, node *tfv1.GPUNode, pool *tfv1.GPUPool) (string, error) {
-	if pool == nil {
-		return "", fmt.Errorf("failed to get tensor-fusion pool, can not create hypervisor pod")
+	log := log.FromContext(ctx)
+
+	log.Info("reconciling hypervisor pod")
+
+	if pool.Spec.ComponentConfig == nil || pool.Spec.ComponentConfig.Hypervisor == nil {
+		return "", fmt.Errorf("missing hypervisor config")
 	}
 
-	namespace := utils.CurrentNamespace()
-	log := log.FromContext(ctx)
-	hypervisorPodName := fmt.Sprintf("hypervisor-%s", node.Name)
+	key := client.ObjectKey{
+		Namespace: utils.CurrentNamespace(),
+		Name:      fmt.Sprintf("hypervisor-%s", node.Name),
+	}
 
-	hypervisorConfig := pool.Spec.ComponentConfig.Hypervisor
+	currentPod := &corev1.Pod{}
+	if err := r.Get(ctx, key, currentPod); err != nil {
+		if !errors.IsNotFound(err) {
+			return "", fmt.Errorf("failed to get current hypervisor pod: %w", err)
+		}
+	} else {
+		if !currentPod.DeletionTimestamp.IsZero() {
+			log.Info("hypervisor pod is being deleted", "name", key.Name)
+			return key.Name, nil
+		}
+
+		if currentPod.Labels[constants.LabelKeyPodTemplateHash] != utils.GetObjectHash(pool.Spec.ComponentConfig.Hypervisor) {
+			if err := r.Delete(ctx, currentPod); err != nil {
+				return "", fmt.Errorf("failed to delete old hypervisor pod: %w", err)
+			}
+			log.Info("old hypervisor pod deleted", "name", currentPod.Name)
+		} else {
+			return key.Name, nil
+		}
+	}
+
+	// no existing pod or config changed, so create new one
+	if err := r.createHypervisorPod(ctx, key, node, pool); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return "", nil
+		} else {
+			return "", fmt.Errorf("failed to create hypervisor pod: %w", err)
+		}
+	}
+
+	return key.Name, nil
+}
+
+func (r *GPUNodeReconciler) createHypervisorPod(ctx context.Context, key client.ObjectKey, node *tfv1.GPUNode, pool *tfv1.GPUPool) error {
+	log := log.FromContext(ctx)
+
 	podTmpl := &corev1.PodTemplate{}
-	err := json.Unmarshal(hypervisorConfig.PodTemplate.Raw, podTmpl)
+	err := json.Unmarshal(pool.Spec.ComponentConfig.Hypervisor.PodTemplate.Raw, podTmpl)
 	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal pod template: %w", err)
+		return fmt.Errorf("failed to unmarshal pod template: %w", err)
 	}
 	spec := podTmpl.Template.Spec.DeepCopy()
 	if spec.NodeSelector == nil {
@@ -402,10 +442,11 @@ func (r *GPUNodeReconciler) reconcileHypervisorPod(ctx context.Context, node *tf
 	})
 	newPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      hypervisorPodName,
-			Namespace: namespace,
+			Name:      key.Name,
+			Namespace: key.Namespace,
 			Labels: map[string]string{
 				fmt.Sprintf(constants.GPUNodePoolIdentifierLabelFormat, pool.Name): "true",
+				constants.LabelKeyPodTemplateHash:                                  utils.GetObjectHash(pool.Spec.ComponentConfig.Hypervisor),
 			},
 		},
 		Spec: *spec,
@@ -419,18 +460,18 @@ func (r *GPUNodeReconciler) reconcileHypervisorPod(ctx context.Context, node *tf
 		Operator: corev1.TolerationOpExists,
 	})
 
-	e := controllerutil.SetControllerReference(node, newPod, r.Scheme)
-	if e != nil {
-		return "", fmt.Errorf("failed to set controller reference: %w", e)
-	}
-	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, newPod, func() error {
-		log.Info("Creating or Updating hypervisor pod", "name", hypervisorPodName)
-		return nil
-	})
+	err = controllerutil.SetControllerReference(node, newPod, r.Scheme)
 	if err != nil {
-		return "", fmt.Errorf("failed to create or update hypervisor pod: %w", err)
+		return fmt.Errorf("failed to set controller reference: %w", err)
 	}
-	return hypervisorPodName, nil
+
+	if err = r.Create(ctx, newPod); err != nil {
+		return fmt.Errorf("failed to create hypervisor pod: %w", err)
+	}
+
+	log.Info("hypervisor pod created", "name", key.Name)
+
+	return nil
 }
 
 func (r *GPUNodeReconciler) reconcileCloudVendorNode(ctx context.Context, node *tfv1.GPUNode, pool *tfv1.GPUPool) error {
