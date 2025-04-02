@@ -12,6 +12,11 @@ import (
 
 // This is for unit testing
 var MockGPUPoolSpec = &tfv1.GPUPoolSpec{
+	CapacityConfig: &tfv1.CapacityConfig{
+		Oversubscription: &tfv1.Oversubscription{
+			TFlopsOversellRatio: 2000,
+		},
+	},
 	NodeManagerConfig: &tfv1.NodeManagerConfig{
 		NodeSelector: &corev1.NodeSelector{
 			NodeSelectorTerms: []corev1.NodeSelectorTerm{

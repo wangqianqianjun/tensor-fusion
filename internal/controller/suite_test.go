@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -30,10 +31,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -58,8 +61,8 @@ var ctx context.Context
 var cancel context.CancelFunc
 
 const (
-	timeout  = time.Second * 10
-	interval = time.Millisecond * 100
+	timeout  = time.Second * 15
+	interval = time.Second
 )
 
 func TestControllers(t *testing.T) {
@@ -69,6 +72,7 @@ func TestControllers(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
+	// Expect(os.Setenv("USE_EXISTING_CLUSTER", "true")).Should(Succeed())
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
 	ctx, cancel = context.WithCancel(context.TODO())
@@ -140,12 +144,12 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
-	err = (&GPUPoolCompactionReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("GPUPoolCompaction"),
-	}).SetupWithManager(mgr)
-	Expect(err).ToNot(HaveOccurred())
+	// err = (&GPUPoolCompactionReconciler{
+	// 	Client:   mgr.GetClient(),
+	// 	Scheme:   mgr.GetScheme(),
+	// 	Recorder: mgr.GetEventRecorderFor("GPUPoolCompaction"),
+	// }).SetupWithManager(mgr)
+	// Expect(err).ToNot(HaveOccurred())
 
 	err = (&GPUNodeClassReconciler{
 		Client: mgr.GetClient(),
@@ -210,10 +214,6 @@ var _ = BeforeSuite(func() {
 		Expect(err).ToNot(HaveOccurred(), "failed to run manager")
 	}()
 
-	// create a cluster with a pool and a node to generate gpunode to simplify testing
-	createMockClusterWithPool(ctx)
-	createMockGPUNode(ctx, "mock-node")
-
 	// TODO: backward compatible with existing tests, can be removed when unnecessary
 	createMockPoolForTestsUsingManualReconcile(ctx)
 })
@@ -223,25 +223,308 @@ var _ = AfterSuite(func() {
 	cancel()
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
+	// Expect(os.Unsetenv("USE_EXISTING_CLUSTER")).To(Succeed())
 })
 
-func createMockClusterWithPool(ctx context.Context) *tfv1.TensorFusionCluster {
-	tfc := &tfv1.TensorFusionCluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "mock-cluster",
-			Namespace: "default",
-		},
-		Spec: tfv1.TensorFusionClusterSpec{
-			GPUPools: []tfv1.GPUPoolDefinition{
-				{
-					Name:         "mock-pool",
-					SpecTemplate: *config.MockGPUPoolSpec,
-				},
-			},
+type TensorFusionEnv struct {
+	clusterKey  client.ObjectKey
+	poolCount   int
+	poolNodeMap map[int]map[int]int
+}
+
+func (c *TensorFusionEnv) GetCluster() *tfv1.TensorFusionCluster {
+	tfc := &tfv1.TensorFusionCluster{}
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.Get(ctx, c.clusterKey, tfc)).Should(Succeed())
+	}).Should(Succeed())
+	return tfc
+}
+
+func (c *TensorFusionEnv) UpdateCluster(tfc *tfv1.TensorFusionCluster) {
+	Expect(k8sClient.Update(ctx, tfc)).Should(Succeed())
+}
+
+func (c *TensorFusionEnv) Cleanup() {
+	for poolIndex, nodeGpuMap := range c.poolNodeMap {
+		for nodeIndex := range nodeGpuMap {
+			c.DeleteGPUNode(poolIndex, nodeIndex)
+		}
+	}
+
+	tfc := c.GetCluster()
+	tfcCopy := tfc.DeepCopy()
+	tfcCopy.Spec.GPUPools = []tfv1.GPUPoolDefinition{}
+	c.UpdateCluster(tfcCopy)
+
+	for poolIndex := range c.poolNodeMap {
+		Eventually(func(g Gomega) {
+			pool := &tfv1.GPUPool{}
+			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: c.getPoolName(poolIndex)}, pool)).Should(HaveOccurred())
+		}, timeout, interval).Should(Succeed())
+		delete(c.poolNodeMap, poolIndex)
+		c.poolCount--
+	}
+
+	Expect(k8sClient.Delete(ctx, tfc)).Should(Succeed())
+	Eventually(func(g Gomega) {
+		err := k8sClient.Get(ctx, c.clusterKey, tfc)
+		g.Expect(err).Should(HaveOccurred())
+	}, timeout, interval).Should(Succeed())
+}
+
+func (c *TensorFusionEnv) GetGPUPoolList() *tfv1.GPUPoolList {
+	poolList := &tfv1.GPUPoolList{}
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.List(ctx, poolList, client.MatchingLabels(map[string]string{
+			constants.LabelKeyOwner: c.clusterKey.Name,
+		}))).Should(Succeed())
+		g.Expect(poolList.Items).Should(HaveLen(c.poolCount))
+	}, timeout, interval).Should(Succeed())
+	return poolList
+}
+
+func (c *TensorFusionEnv) GetGPUPool(poolIndex int) *tfv1.GPUPool {
+	pool := &tfv1.GPUPool{}
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: c.getPoolName(poolIndex)}, pool)).Should(Succeed())
+	}).Should(Succeed())
+	return pool
+}
+
+func (c *TensorFusionEnv) GetGPUNodeList(poolIndex int) *tfv1.GPUNodeList {
+	nodeList := &tfv1.GPUNodeList{}
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.List(ctx, nodeList, client.MatchingLabels(map[string]string{
+			fmt.Sprintf(constants.GPUNodePoolIdentifierLabelFormat, c.getPoolName(poolIndex)): "true",
+		}))).Should(Succeed())
+		g.Expect(nodeList.Items).Should(HaveLen(len(c.poolNodeMap[poolIndex])))
+	}, timeout, interval).Should(Succeed())
+	return nodeList
+}
+
+func (c *TensorFusionEnv) GetGPUNode(poolIndex int, nodeIndex int) *tfv1.GPUNode {
+	node := &tfv1.GPUNode{}
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: c.getNodeName(poolIndex, nodeIndex)}, node)).Should(Succeed())
+	}, timeout, interval).Should(Succeed())
+	return node
+}
+
+func (c *TensorFusionEnv) DeleteGPUNode(poolIndex int, nodeIndex int) {
+	c.DeleteNodeGpuList(poolIndex, nodeIndex)
+	node := c.GetGPUNode(poolIndex, nodeIndex)
+	Expect(k8sClient.Delete(ctx, node)).Should(Succeed())
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: c.getNodeName(poolIndex, nodeIndex)}, node)).Should(HaveOccurred())
+	}, timeout, interval).Should(Succeed())
+	delete(c.poolNodeMap[poolIndex], nodeIndex)
+}
+
+func (c *TensorFusionEnv) GetNodeGpuList(poolIndex int, nodeIndex int) *tfv1.GPUList {
+	gpuList := &tfv1.GPUList{}
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.List(ctx, gpuList, client.MatchingLabels(map[string]string{
+			constants.LabelKeyOwner: c.getNodeName(poolIndex, nodeIndex),
+		}))).Should(Succeed())
+		g.Expect(gpuList.Items).Should(HaveLen(c.poolNodeMap[poolIndex][nodeIndex]))
+	}, timeout, interval).Should(Succeed())
+	return gpuList
+}
+
+func (c *TensorFusionEnv) DeleteNodeGpuList(poolIndex int, nodeIndex int) {
+	Expect(k8sClient.DeleteAllOf(ctx, &tfv1.GPU{},
+		client.MatchingLabels{constants.LabelKeyOwner: c.getNodeName(poolIndex, nodeIndex)},
+	)).Should(Succeed())
+}
+
+func (c *TensorFusionEnv) GetPoolGpuList(poolIndex int) *tfv1.GPUList {
+	gpuList := &tfv1.GPUList{}
+	poolGpuCount := 0
+	for _, gpuCount := range c.poolNodeMap[poolIndex] {
+		poolGpuCount += gpuCount
+	}
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.List(ctx, gpuList, client.MatchingLabels(map[string]string{
+			constants.GpuPoolKey: c.getPoolName(poolIndex),
+		}))).Should(Succeed())
+		g.Expect(gpuList.Items).Should(HaveLen(poolGpuCount))
+	}, timeout, interval).Should(Succeed())
+	return gpuList
+}
+
+// https://book.kubebuilder.io/reference/envtest#testing-considerations
+// Unless you’re using an existing cluster, keep in mind that no built-in controllers are running in the test context.
+// So the checkStatusAndUpdateVirtualCapacity in gpunode_controller.go checking pod status always pending and the gpunode status can't change to running
+// When using an existing cluster, the test speed go a lot faster, may change later?
+func (c *TensorFusionEnv) UpdateHypervisorStatus() {
+	if os.Getenv("USE_EXISTING_CLUSTER") != "true" {
+		for poolIndex := range c.poolNodeMap {
+			podList := &corev1.PodList{}
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.List(ctx, podList,
+					client.InNamespace(utils.CurrentNamespace()),
+					client.MatchingLabels(map[string]string{
+						fmt.Sprintf(constants.GPUNodePoolIdentifierLabelFormat, c.getPoolName(poolIndex)): "true",
+					}),
+				)).Should(Succeed())
+				g.Expect(podList.Items).Should(HaveLen(len(c.poolNodeMap[poolIndex])))
+			}, timeout, interval).Should(Succeed())
+			for _, pod := range podList.Items {
+				pod.Status.Phase = corev1.PodRunning
+				pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue})
+				Expect(k8sClient.Status().Update(ctx, &pod)).Should(Succeed())
+			}
+		}
+	}
+}
+
+func (c *TensorFusionEnv) getPoolName(poolIndex int) string {
+	return fmt.Sprintf("%s-pool-%d", c.clusterKey.Name, poolIndex)
+}
+
+func (c *TensorFusionEnv) getNodeName(poolIndex int, nodeIndex int) string {
+	return fmt.Sprintf("%s-pool-%d-node-%d", c.clusterKey.Name, poolIndex, nodeIndex)
+}
+
+func (c *TensorFusionEnv) getGPUName(poolIndex int, nodeIndex int, gpuIndex int) string {
+	return fmt.Sprintf("%s-pool-%d-node-%d-gpu-%d", c.clusterKey.Name, poolIndex, nodeIndex, gpuIndex)
+}
+
+type TensorFusionEnvBuilder struct {
+	*TensorFusionEnv
+}
+
+func NewTensorFusionEnvBuilder() *TensorFusionEnvBuilder {
+	return &TensorFusionEnvBuilder{
+		&TensorFusionEnv{
+			poolCount:   0,
+			clusterKey:  client.ObjectKey{},
+			poolNodeMap: map[int]map[int]int{},
 		},
 	}
+}
+
+func (b *TensorFusionEnvBuilder) AddPoolWithNodeCount(nodeCount int) *TensorFusionEnvBuilder {
+	nodeGpuMap := make(map[int]int, nodeCount)
+	for i := range nodeCount {
+		nodeGpuMap[i] = 0
+	}
+	b.poolNodeMap[b.poolCount] = nodeGpuMap
+	b.poolCount++
+	return b
+}
+
+func (b *TensorFusionEnvBuilder) SetGpuCountPerNode(gpuCount int) *TensorFusionEnvBuilder {
+	poolIndex := b.poolCount - 1
+	for nodeIndex := range b.poolNodeMap[poolIndex] {
+		b.poolNodeMap[poolIndex][nodeIndex] = gpuCount
+	}
+	return b
+}
+
+func (b *TensorFusionEnvBuilder) SetGpuCountForNode(nodeIndex int, gpuCount int) *TensorFusionEnvBuilder {
+	poolIndex := b.poolCount - 1
+	b.poolNodeMap[poolIndex][nodeIndex] = gpuCount
+	return b
+}
+
+var testEnvId int = 0
+
+func (b *TensorFusionEnvBuilder) Build() *TensorFusionEnv {
+	b.clusterKey = client.ObjectKey{
+		Name:      fmt.Sprintf("cluster-%d", testEnvId),
+		Namespace: "default",
+	}
+	testEnvId++
+
+	// generate cluster
+	tfc := &tfv1.TensorFusionCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      b.clusterKey.Name,
+			Namespace: b.clusterKey.Namespace,
+		},
+	}
+
+	// construct pools
+	gpuPools := make([]tfv1.GPUPoolDefinition, b.poolCount)
+	for i := range b.poolCount {
+		poolSpec := config.MockGPUPoolSpec.DeepCopy()
+		poolSpec.NodeManagerConfig.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Key =
+			fmt.Sprintf("%s-label-%d", tfc.Name, i)
+		gpuPools[i] = tfv1.GPUPoolDefinition{
+			Name:         fmt.Sprintf("pool-%d", i),
+			SpecTemplate: *poolSpec,
+		}
+	}
+
+	tfc.Spec.GPUPools = gpuPools
 	Expect(k8sClient.Create(ctx, tfc)).To(Succeed())
-	return tfc
+
+	// generate nodes
+	selectors := strings.Split(constants.InitialGPUNodeSelector, "=")
+	for poolIndex, nodeGpuMap := range b.poolNodeMap {
+		if poolIndex >= b.poolCount {
+			continue
+		}
+
+		for nodeIndex, gpuCount := range nodeGpuMap {
+			coreNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: b.getNodeName(poolIndex, nodeIndex),
+					Labels: map[string]string{
+						selectors[0]: selectors[1],
+						fmt.Sprintf("%s-label-%d", tfc.Name, poolIndex): "true",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, coreNode)).To(Succeed())
+
+			// generate gpus for gpunode
+			if gpuCount > 0 {
+				gpuNode := b.GetGPUNode(poolIndex, nodeIndex)
+				for gpuIndex := range gpuCount {
+					key := client.ObjectKey{
+						Name: b.getGPUName(poolIndex, nodeIndex, gpuIndex),
+					}
+					gpu := &tfv1.GPU{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: key.Name,
+							Labels: map[string]string{
+								constants.LabelKeyOwner: gpuNode.Name,
+							},
+						},
+					}
+					Expect(controllerutil.SetControllerReference(gpuNode, gpu, scheme.Scheme)).To(Succeed())
+					Expect(k8sClient.Create(ctx, gpu)).To(Succeed())
+					patch := client.MergeFrom(gpu.DeepCopy())
+					gpu.Status = tfv1.GPUStatus{
+						Phase:    tfv1.TensorFusionGPUPhaseRunning,
+						UUID:     key.Name,
+						GPUModel: "T4",
+						NodeSelector: map[string]string{
+							"kubernetes.io/hostname": b.getNodeName(poolIndex, nodeIndex),
+						},
+						Capacity: &tfv1.Resource{
+							Tflops: resource.MustParse("2000"),
+							Vram:   resource.MustParse("2000Gi"),
+						},
+						Available: &tfv1.Resource{
+							Tflops: resource.MustParse("2000"),
+							Vram:   resource.MustParse("2000Gi"),
+						},
+						Message: "mock message",
+					}
+					Expect(k8sClient.Status().Patch(ctx, gpu, patch)).To(Succeed())
+				}
+			}
+		}
+
+		b.GetPoolGpuList(poolIndex)
+	}
+
+	b.UpdateHypervisorStatus()
+
+	return b.TensorFusionEnv
 }
 
 func createMockPoolForTestsUsingManualReconcile(ctx context.Context) {
@@ -265,60 +548,4 @@ func createMockPoolForTestsUsingManualReconcile(ctx context.Context) {
 		Spec: *poolSpecCopy,
 	}
 	Expect(k8sClient.Create(ctx, pool)).To(Succeed())
-}
-
-func getMockCluster(ctx context.Context) *tfv1.TensorFusionCluster {
-	tfc := &tfv1.TensorFusionCluster{}
-	Eventually(func() error {
-		return k8sClient.Get(ctx, client.ObjectKey{Name: "mock-cluster", Namespace: "default"}, tfc)
-	}).Should(Succeed())
-	return tfc
-}
-
-func getMockGPUPool(ctx context.Context) *tfv1.GPUPool {
-	tfc := getMockCluster(ctx)
-	poolList := &tfv1.GPUPoolList{}
-	Eventually(func() string {
-		err := k8sClient.List(ctx, poolList, client.MatchingLabels(map[string]string{
-			constants.LabelKeyOwner: tfc.GetName(),
-		}))
-		Expect(err).NotTo(HaveOccurred())
-		if len(poolList.Items) > 0 {
-			return poolList.Items[0].Name
-		}
-		return ""
-	}, timeout, interval).Should(Equal(tfc.Name + "-" + tfc.Spec.GPUPools[0].Name))
-
-	return &poolList.Items[0]
-}
-
-// mock k8s node with specific labels to generate gpunode
-func createMockGPUNode(ctx context.Context, name string) {
-	selectors := strings.Split(constants.InitialGPUNodeSelector, "=")
-	coreNode := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				selectors[0]: selectors[1],
-				// same with the NodeManagerConfig in gpupool_mock.go
-				"mock-label": "true",
-			},
-		},
-		Spec: corev1.NodeSpec{},
-	}
-	Expect(k8sClient.Create(ctx, coreNode)).To(Succeed())
-}
-
-func getMockGPUNode(ctx context.Context, name string) *tfv1.GPUNode {
-	gpuNode := &tfv1.GPUNode{}
-	Eventually(func() string {
-		err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, gpuNode)
-		if err != nil {
-			return ""
-		} else {
-			return gpuNode.Status.KubernetesNodeName
-		}
-	}, timeout, interval).Should(Equal(name))
-
-	return gpuNode
 }

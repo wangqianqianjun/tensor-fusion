@@ -54,13 +54,13 @@ func (r *GPUPoolCompactionReconciler) checkNodeCompaction(ctx context.Context, p
 	// Strategy #1, terminate empty node
 	allNodes := &tfv1.GPUNodeList{}
 	if err := r.List(ctx, allNodes, client.MatchingLabels(map[string]string{
-		fmt.Sprintf(constants.GPUNodePoolIdentifierLabelFormat, pool.Name): "true",
+		fmt.Sprintf(constants.GPUNodePoolIdentifierLabelFormat, pool.Name): constants.LabelValueTrue,
 	})); err != nil {
 		return fmt.Errorf("failed to list nodes : %w", err)
 	}
 	for _, gpuNode := range allNodes.Items {
 		// Skip a node that is labeled as NoDisrupt
-		if gpuNode.Labels[constants.SchedulingDoNotDisruptLabel] == "true" {
+		if gpuNode.Labels[constants.SchedulingDoNotDisruptLabel] == constants.LabelValueTrue {
 			continue
 		}
 
@@ -116,7 +116,7 @@ func (r *GPUPoolCompactionReconciler) checkNodeCompaction(ctx context.Context, p
 					ObjectMeta: metav1.ObjectMeta{
 						Name: gpuNode.Status.KubernetesNodeName,
 						Labels: map[string]string{
-							constants.NodeDeletionMark: "true",
+							constants.NodeDeletionMark: constants.LabelValueTrue,
 						},
 					},
 				}, client.Merge)

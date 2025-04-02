@@ -53,11 +53,11 @@ type GPUPoolReconciler struct {
 func (r *GPUPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	runNow, alreadyQueued, waitTime := utils.DebouncedReconcileCheck(ctx, &r.LastProcessedItems, req.NamespacedName)
-	if alreadyQueued {
-		log.Info("GPUPool already queued for reconcile", "name", req.NamespacedName.Name)
-		return ctrl.Result{}, nil
-	}
+	runNow, _, waitTime := utils.DebouncedReconcileCheck(ctx, &r.LastProcessedItems, req.NamespacedName)
+	// if alreadyQueued {
+	// 	log.Info("GPUPool already queued for reconcile", "name", req.NamespacedName.Name)
+	// 	return ctrl.Result{}, nil
+	// }
 	if !runNow {
 		return ctrl.Result{RequeueAfter: waitTime}, nil
 	}
@@ -77,6 +77,7 @@ func (r *GPUPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// TODO: if phase is destroying, stop all existing workers and hypervisors, stop time series flow aggregations
 	deleted, err := utils.HandleFinalizer(ctx, pool, r.Client, func(ctx context.Context, pool *tfv1.GPUPool) (bool, error) {
+		log.Info("TensorFusionGPUPool is being deleted", "name", pool.Name)
 		if pool.Status.Phase != tfv1.TensorFusionPoolPhaseDestroying {
 			pool.Status.Phase = tfv1.TensorFusionPoolPhaseDestroying
 			if err := r.Status().Update(ctx, pool); err != nil {

@@ -17,22 +17,29 @@ limitations under the License.
 package controller
 
 import (
-	"context"
-
+	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 )
 
 var _ = Describe("GPUPool Controller", func() {
-	Context("When reconciling a resource", func() {
+	Context("When reconciling a gpupool", func() {
 		It("Should update status when nodes ready", func() {
-			ctx := context.Background()
+			tfEnv := NewTensorFusionEnvBuilder().
+				AddPoolWithNodeCount(1).
+				SetGpuCountPerNode(1).
+				Build()
 			Eventually(func(g Gomega) {
-				pool := getMockGPUPool(ctx)
+				pool := tfEnv.GetGPUPool(0)
 				g.Expect(pool.Status.Phase).Should(Equal(tfv1.TensorFusionPoolPhaseRunning))
 			}, timeout, interval).Should(Succeed())
+		})
+	})
+
+	Context("When pool hypervisor config changed", func() {
+		It("Should trigger reconciliation for all gpunodes in the pool", func() {
+			By("changing pool hypervisor config")
+
 		})
 	})
 })

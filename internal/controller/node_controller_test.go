@@ -17,23 +17,21 @@ limitations under the License.
 package controller
 
 import (
-	"context"
-	"fmt"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/NexusGPU/tensor-fusion/internal/constants"
 )
 
 var _ = Describe("Node Controller", func() {
-	Context("When a node has specific labels", func() {
-		It("Should create GPUNode custom resource", func() {
-			ctx := context.Background()
-			pool := getMockGPUPool(ctx)
-			gpunode := getMockGPUNode(ctx, "mock-node")
-			Expect(gpunode.GetLabels()[constants.LabelKeyOwner]).Should(Equal(pool.Name))
-			Expect(gpunode.GetLabels()[fmt.Sprintf(constants.GPUNodePoolIdentifierLabelFormat, pool.Name)]).Should(Equal("true"))
+	Context("When Node has specific labels", func() {
+		It("Should create gpunode for pool based on node label", func() {
+			var tfEnv *TensorFusionEnv
+			By("checking two pools, one with two nodes, one with three nodes")
+			tfEnv = NewTensorFusionEnvBuilder().
+				AddPoolWithNodeCount(2).
+				AddPoolWithNodeCount(3).
+				Build()
+			Expect(tfEnv.GetGPUNodeList(0).Items).Should(HaveLen(2))
+			Expect(tfEnv.GetGPUNodeList(1).Items).Should(HaveLen(3))
 		})
 	})
 })

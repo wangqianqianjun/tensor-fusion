@@ -66,10 +66,11 @@ type TensorFusionClusterReconciler struct {
 func (r *TensorFusionClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	runNow, alreadyQueued, waitTime := utils.DebouncedReconcileCheck(ctx, &r.LastProcessedItems, req.NamespacedName)
-	if alreadyQueued {
-		return ctrl.Result{}, nil
-	}
+	runNow, _, waitTime := utils.DebouncedReconcileCheck(ctx, &r.LastProcessedItems, req.NamespacedName)
+	// If delete event happen during wait time and no other event trigger reconciliation, it will not be deleted
+	// if alreadyQueued {
+	// 	return ctrl.Result{}, nil
+	// }
 	if !runNow {
 		return ctrl.Result{RequeueAfter: waitTime}, nil
 	}

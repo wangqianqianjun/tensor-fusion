@@ -14,6 +14,7 @@ const (
 	LabelKeyClusterOwner    = Domain + "/cluster"
 	LabelKeyNodeClass       = Domain + "/node-class"
 	LabelKeyPodTemplateHash = Domain + "/pod-template-hash"
+	LabelValueTrue          = "true"
 
 	GPUNodePoolIdentifierLabelPrefix = Domain + "/pool-"
 	GPUNodePoolIdentifierLabelFormat = Domain + "/pool-%s"
