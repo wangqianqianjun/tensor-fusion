@@ -192,7 +192,7 @@ var _ = Describe("TensorFusionWorkload Controller", func() {
 				g.Expect(k8sClient.List(ctx, podList,
 					client.InNamespace(workload.Namespace),
 					client.MatchingLabels{constants.WorkloadKey: workload.Name})).Should(Succeed())
-				g.Expect(podList.Items).Should(BeNil())
+				g.Expect(podList.Items).Should(BeEmpty())
 			}, 5*time.Second, 100*time.Millisecond).Should(Succeed())
 		})
 	})
@@ -261,10 +261,14 @@ func createTensorFusionWorkload(poolName string, key client.ObjectKey, replicas 
 func cleanupWorkload(key client.ObjectKey) {
 	GinkgoHelper()
 	workload := &tfv1.TensorFusionWorkload{}
-	Expect(k8sClient.Get(ctx, key, workload)).Should(Succeed())
-	workloadCopy := workload.DeepCopy()
-	workloadCopy.Spec.Replicas = ptr.Int32(0)
-	Expect(k8sClient.Update(ctx, workloadCopy)).To(Succeed())
+
+	// Set replicas to 0
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.Get(ctx, key, workload)).Should(Succeed())
+		workload.Spec.Replicas = ptr.Int32(0)
+		g.Expect(k8sClient.Update(ctx, workload)).To(Succeed())
+	}, timeout, interval).Should(Succeed())
+
 	Eventually(func(g Gomega) {
 		podList := &corev1.PodList{}
 		g.Expect(k8sClient.List(ctx, podList,
