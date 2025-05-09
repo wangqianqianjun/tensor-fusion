@@ -17,7 +17,7 @@ const (
 	LabelKeyClusterOwner    = Domain + "/cluster"
 	LabelKeyNodeClass       = Domain + "/node-class"
 	LabelKeyPodTemplateHash = Domain + "/pod-template-hash"
-	LabelValueTrue          = "true"
+	TrueStringValue         = "true"
 
 	GPUNodePoolIdentifierLabelPrefix = Domain + "/pool-"
 	GPUNodePoolIdentifierLabelFormat = Domain + "/pool-%s"
@@ -41,6 +41,7 @@ const (
 	InjectContainerAnnotation = Domain + "/inject-container"
 	ReplicasAnnotation        = Domain + "/replicas"
 	GenWorkloadAnnotation     = Domain + "/generate-workload"
+	GpuReleasedAnnotation     = Domain + "/gpu-released"
 
 	TensorFusionPodCounterKeyAnnotation   = Domain + "/pod-counter-key"
 	TensorFusionPodCountAnnotation        = Domain + "/tf-pod-count"

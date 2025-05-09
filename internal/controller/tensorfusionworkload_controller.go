@@ -30,8 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"slices"
-
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
@@ -100,7 +98,6 @@ func (r *TensorFusionWorkloadReconciler) Reconcile(ctx context.Context, req ctrl
 	if shouldReturn {
 		return ctrl.Result{}, nil
 	}
-
 	// Handle pods with finalizers that need GPU resource cleanup
 	hasDeletion := false
 	// Process pods with our finalizer
@@ -279,16 +276,21 @@ func (r *TensorFusionWorkloadReconciler) scaleDownWorkers(ctx context.Context, w
 func (r *TensorFusionWorkloadReconciler) handlePodGPUCleanup(ctx context.Context, pod *corev1.Pod, workload *tfv1.TensorFusionWorkload) (bool, error) {
 	log := log.FromContext(ctx)
 
-	// Check if this is our finalizer
-	if !containsFinalizer(pod, constants.Finalizer) {
-		// Not our finalizer, skip processing
-		return true, nil
-	}
 	log.Info("Processing pod with GPU resource cleanup finalizer", "pod", pod.Name)
+
 	// Get GPU name from pod label
 	gpuName, ok := pod.Labels[constants.GpuKey]
 	if !ok {
 		log.Info("Pod has finalizer but no GPU label", "pod", pod.Name)
+		return true, nil
+	}
+
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+
+	if pod.Annotations[constants.GpuReleasedAnnotation] == constants.TrueStringValue {
+		log.Info("GPU has been released for this pod", "pod", pod.Name)
 		return true, nil
 	}
 
@@ -305,6 +307,18 @@ func (r *TensorFusionWorkloadReconciler) handlePodGPUCleanup(ctx context.Context
 		return false, err
 	}
 
+	pod.Annotations[constants.GpuReleasedAnnotation] = constants.TrueStringValue
+
+	// Update the annotation of the Pod to mark that GPU cleanup has been successfully processed.
+	// This is a key part of ensuring idempotency for the handlePodGPUCleanup function.
+	// If this function is called again for the same Pod instance (e.g., due to the client cache
+	// not yet reflecting the finalizer's removal), Then this r.Update pod will fail.
+	// Will not cause duplicate releases
+	if err := r.Update(ctx, pod); err != nil {
+		log.Error(err, "Failed to mark that GPU cleanup of pod", "gpu", gpuName, "pod", pod.Name)
+		return false, err
+	}
+
 	// Release GPU resources
 	if err := r.Scheduler.Release(ctx, workload.Spec.Resources.Requests, gpu); err != nil {
 		log.Error(err, "Failed to release GPU resources, will retry", "gpu", gpuName, "pod", pod.Name)
@@ -313,11 +327,6 @@ func (r *TensorFusionWorkloadReconciler) handlePodGPUCleanup(ctx context.Context
 
 	log.Info("Released GPU resources via finalizer", "gpu", gpuName, "pod", pod.Name)
 	return true, nil
-}
-
-// Helper function to check if a pod has a specific finalizer
-func containsFinalizer(pod *corev1.Pod, finalizer string) bool {
-	return slices.Contains(pod.Finalizers, finalizer)
 }
 
 // deletePod deletes a pod
