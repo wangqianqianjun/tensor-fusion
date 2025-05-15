@@ -14,6 +14,7 @@ const (
 	Finalizer       = Domain + "/" + FinalizerSuffix
 
 	LabelKeyOwner           = Domain + "/managed-by"
+	LabelKeyUser            = Domain + "/used-by"
 	LabelKeyClusterOwner    = Domain + "/cluster"
 	LabelKeyNodeClass       = Domain + "/node-class"
 	LabelKeyPodTemplateHash = Domain + "/pod-template-hash"
@@ -32,16 +33,23 @@ const (
 	GpuPoolKey                     = Domain + "/gpupool"
 
 	// Annotation key constants
+	GpuCountKey                      = Domain + "/gpu-count"
+	TFLOPSRequestAnnotation          = Domain + "/tflops-request"
+	VRAMRequestAnnotation            = Domain + "/vram-request"
+	TFLOPSLimitAnnotation            = Domain + "/tflops-limit"
+	VRAMLimitAnnotation              = Domain + "/vram-limit"
+	WorkloadProfileAnnotation        = Domain + "/client-profile"
+	InjectContainerAnnotation        = Domain + "/inject-container"
+	ReplicasAnnotation               = Domain + "/replicas"
+	GenWorkloadAnnotation            = Domain + "/generate-workload"
+	IsLocalGPUAnnotation             = Domain + "/is-local-gpu"
+	NoStandaloneWorkerModeAnnotation = Domain + "/no-standalone-worker-mode"
 
-	TFLOPSRequestAnnotation   = Domain + "/tflops-request"
-	VRAMRequestAnnotation     = Domain + "/vram-request"
-	TFLOPSLimitAnnotation     = Domain + "/tflops-limit"
-	VRAMLimitAnnotation       = Domain + "/vram-limit"
-	WorkloadProfileAnnotation = Domain + "/client-profile"
-	InjectContainerAnnotation = Domain + "/inject-container"
-	ReplicasAnnotation        = Domain + "/replicas"
-	GenWorkloadAnnotation     = Domain + "/generate-workload"
-	GpuReleasedAnnotation     = Domain + "/gpu-released"
+	AutoScaleLimitsAnnotation   = Domain + "/auto-limits"
+	AutoScaleRequestsAnnotation = Domain + "/auto-requests"
+	AutoScaleReplicasAnnotation = Domain + "/auto-replicas"
+
+	GpuReleasedAnnotation = Domain + "/gpu-released"
 
 	TensorFusionPodCounterKeyAnnotation   = Domain + "/pod-counter-key"
 	TensorFusionPodCountAnnotation        = Domain + "/tf-pod-count"

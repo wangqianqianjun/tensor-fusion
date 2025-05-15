@@ -43,9 +43,6 @@ type GPUPoolSpec struct {
 	ComponentConfig *ComponentConfig `json:"componentConfig,omitempty"`
 
 	// +optional
-	SchedulingConfig *SchedulingConfigTemplateSpec `json:"schedulingConfig,omitempty"`
-
-	// +optional
 	SchedulingConfigTemplate *string `json:"schedulingConfigTemplate,omitempty"`
 }
 
@@ -385,15 +382,15 @@ type GPUPoolStatus struct {
 	// when the progress is 100, the component version or config is fully updated.
 	ComponentStatus PoolComponentStatus `json:"componentStatus"`
 
-	// calculated every 5m average
+	// TODO: calculated every 1h/1d/1w average
 	UtilizedTFlopsPercent string `json:"utilizedTFlopsPercent,omitempty"`
 	UtilizedVRAMPercent   string `json:"utilizedVRAMPercent,omitempty"`
 
-	// updated with interval
+	// TODO: updated with interval
 	AllocatedTFlopsPercent string `json:"allocatedTFlopsPercent,omitempty"`
 	AllocatedVRAMPercent   string `json:"allocatedVRAMPercent,omitempty"`
 
-	// aggregated with interval
+	// TODO: aggregated with interval
 	SavedCostsPerMonth       string `json:"savedCostsPerMonth,omitempty"`
 	PotentialSavingsPerMonth string `json:"potentialSavingsPerMonth,omitempty"`
 
