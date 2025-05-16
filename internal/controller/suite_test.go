@@ -46,7 +46,7 @@ import (
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
-	scheduler "github.com/NexusGPU/tensor-fusion/internal/scheduler"
+	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
 	// +kubebuilder:scaffold:imports
 )
@@ -59,6 +59,7 @@ var k8sClient client.Client
 var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
+var allocator *gpuallocator.GpuAllocator
 
 const (
 	timeout  = time.Second * 10
@@ -178,7 +179,10 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
-	scheduler := scheduler.NewScheduler(mgr.GetClient())
+	allocator = gpuallocator.NewGpuAllocator(ctx, mgr.GetClient(), 3*time.Second)
+	_, err = allocator.SetupWithManager(ctx, mgr)
+	Expect(err).ToNot(HaveOccurred())
+
 	err = (&TensorFusionConnectionReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -195,7 +199,7 @@ var _ = BeforeSuite(func() {
 	err = (&TensorFusionWorkloadReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
-		Scheduler: scheduler,
+		Allocator: allocator,
 		Recorder:  mgr.GetEventRecorderFor("TensorFusionWorkload"),
 		GpuInfos:  config.MockGpuInfo(),
 	}).SetupWithManager(mgr)
@@ -211,6 +215,7 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
+	allocator.Stop()
 	cancel()
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())

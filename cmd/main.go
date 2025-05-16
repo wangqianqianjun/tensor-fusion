@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -43,7 +44,7 @@ import (
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/controller"
-	"github.com/NexusGPU/tensor-fusion/internal/scheduler"
+	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/server"
 	"github.com/NexusGPU/tensor-fusion/internal/server/router"
 	webhookcorev1 "github.com/NexusGPU/tensor-fusion/internal/webhook/v1"
@@ -169,7 +170,12 @@ func main() {
 
 	ctx := context.Background()
 
-	scheduler := scheduler.NewScheduler(mgr.GetClient())
+	// Initialize GPU allocator and set up watches
+	allocator := gpuallocator.NewGpuAllocator(ctx, mgr.GetClient(), 10*time.Second)
+	if _, err = allocator.SetupWithManager(ctx, mgr); err != nil {
+		setupLog.Error(err, "unable to set up GPU allocator watches")
+		os.Exit(1)
+	}
 	if err = (&controller.TensorFusionConnectionReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -270,7 +276,7 @@ func main() {
 	if err = (&controller.TensorFusionWorkloadReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
-		Scheduler: scheduler,
+		Allocator: allocator,
 		Recorder:  mgr.GetEventRecorderFor("tensorfusionworkload"),
 		GpuInfos:  &gpuInfos,
 	}).SetupWithManager(mgr); err != nil {
@@ -306,6 +312,21 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	// cleanup function to stop the allocator
+	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		// wait for the context to be done
+		<-ctx.Done()
+		setupLog.Info("stopping allocator")
+		if allocator != nil {
+			allocator.Stop()
+		}
+		return nil
+	}))
+	if err != nil {
+		setupLog.Error(err, "unable to add allocator cleanup to manager")
+		os.Exit(1)
+	}
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
