@@ -344,7 +344,7 @@ func (r *TensorFusionWorkloadReconciler) scaleUpWorkers(ctx context.Context, wor
 	// Create worker pods
 	for range count {
 		// Schedule GPU for the worker
-		gpus, err := r.Allocator.Alloc(ctx, workload.Spec.PoolName, workload.Spec.Resources.Requests, 1)
+		gpus, err := r.Allocator.Alloc(ctx, workload.Spec.PoolName, workload.Spec.Resources.Requests, 1, workload.Spec.GPUModel)
 		if err != nil {
 			r.Recorder.Eventf(workload, corev1.EventTypeWarning, "ScheduleGPUFailed", "Failed to schedule GPU: %v", err)
 			return ctrl.Result{RequeueAfter: constants.PendingRequeueDuration}, nil

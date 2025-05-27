@@ -50,6 +50,10 @@ type WorkloadProfileSpec struct {
 	IsLocalGPU bool `json:"isLocalGPU,omitempty"`
 
 	// +optional
+	// GPUModel specifies the required GPU model (e.g., "A100", "H100")
+	GPUModel string `json:"gpuModel,omitempty"`
+
+	// +optional
 	// TODO, not implemented
 	// The number of GPUs to be used by the workload, default to 1
 	GPUCount int `json:"gpuCount,omitempty"`
