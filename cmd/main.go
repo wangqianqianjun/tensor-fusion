@@ -47,6 +47,7 @@ import (
 	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/server"
 	"github.com/NexusGPU/tensor-fusion/internal/server/router"
+	"github.com/NexusGPU/tensor-fusion/internal/version"
 	webhookcorev1 "github.com/NexusGPU/tensor-fusion/internal/webhook/v1"
 	// +kubebuilder:scaffold:imports
 )
@@ -91,6 +92,9 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// print version info
+	setupLog.Info(version.VersionInfo())
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
