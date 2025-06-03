@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -38,20 +40,21 @@ import (
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/metrics"
+	"github.com/NexusGPU/tensor-fusion/internal/portallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
 	"github.com/NexusGPU/tensor-fusion/internal/worker"
 	"github.com/lithammer/shortuuid/v4"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/samber/lo"
 )
 
 // TensorFusionWorkloadReconciler reconciles a TensorFusionWorkload object
 type TensorFusionWorkloadReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	Allocator *gpuallocator.GpuAllocator
-	Recorder  record.EventRecorder
-	GpuInfos  *[]config.GpuInfo
+	Scheme        *runtime.Scheme
+	Allocator     *gpuallocator.GpuAllocator
+	Recorder      record.EventRecorder
+	GpuInfos      *[]config.GpuInfo
+	PortAllocator *portallocator.PortAllocator
 }
 
 // +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionworkloads,verbs=get;list;watch;create;update;patch;delete
@@ -59,6 +62,8 @@ type TensorFusionWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionworkloads/finalizers,verbs=update
 
 // TensorFusionWorkload Reconciler
+//
+//nolint:gocyclo
 func (r *TensorFusionWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 	log.Info("Reconciling TensorFusionWorkload", "request", req)
@@ -107,7 +112,14 @@ func (r *TensorFusionWorkloadReconciler) Reconcile(ctx context.Context, req ctrl
 	// Process pods with our finalizer
 	for i := range podList.Items {
 		pod := &podList.Items[i]
-		deleted := pod.DeletionTimestamp != nil
+		deleted := !pod.DeletionTimestamp.IsZero()
+
+		if deleted {
+			metrics.RemoveWorkerMetrics(pod.Name, pod.DeletionTimestamp.Time)
+			podPort, _ := strconv.Atoi(pod.Annotations[constants.GenPortNumberAnnotation])
+			_ = r.PortAllocator.ReleaseHostPort(pod.Spec.NodeName, podPort)
+		}
+
 		// Handle our GPU resource cleanup finalizer
 		_, err := utils.HandleFinalizer(ctx, pod, r.Client, func(ctx context.Context, obj *corev1.Pod) (bool, error) {
 			return r.handlePodGPUCleanup(ctx, pod, workload)
@@ -127,6 +139,9 @@ func (r *TensorFusionWorkloadReconciler) Reconcile(ctx context.Context, req ctrl
 		log.Info("Workload is being deleted, skipping pod creation", "name", workload.Name, "namespace", workload.Namespace)
 		return ctrl.Result{}, nil
 	}
+
+	// init metrics map if needed
+	handleMetricsRecorder(podList, workload)
 
 	// Fetch the GPUPool
 	pool := &tfv1.GPUPool{}
@@ -239,6 +254,14 @@ func (r *TensorFusionWorkloadReconciler) reconcileScaling(
 	return ctrl.Result{}, nil
 }
 
+func handleMetricsRecorder(podList *corev1.PodList, workload *tfv1.TensorFusionWorkload) {
+	now := time.Now()
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		metrics.SetWorkerMetricsByWorkload(pod, workload, now)
+	}
+}
+
 func (r *TensorFusionWorkloadReconciler) tryStartWorker(
 	ctx context.Context,
 	workerGenerator *worker.WorkerGenerator,
@@ -246,8 +269,14 @@ func (r *TensorFusionWorkloadReconciler) tryStartWorker(
 	workload *tfv1.TensorFusionWorkload,
 	hash string,
 ) (*corev1.Pod, error) {
-	port := workerGenerator.AllocPort()
-	pod, hash, err := workerGenerator.GenerateWorkerPod(gpus, fmt.Sprintf("%s-tf-worker-", workload.Name), workload.Namespace, port, workload.Spec.Resources.Limits, hash)
+	if len(gpus) == 0 || gpus[0].Labels == nil {
+		return nil, fmt.Errorf("no gpus or no labels, can not assign host port for worker")
+	}
+	port, err := r.PortAllocator.AssignHostPort(gpus[0].Status.NodeSelector[constants.KubernetesHostNameLabel])
+	if err != nil {
+		return nil, fmt.Errorf("get host port %w", err)
+	}
+	pod, hash, err := workerGenerator.GenerateWorkerPod(gpus, fmt.Sprintf("%s-tf-worker-", workload.Name), workload.Namespace, port, workload.Spec.Resources.Requests, workload.Spec.Resources.Limits, hash)
 	if err != nil {
 		return nil, fmt.Errorf("generate worker pod %w", err)
 	}
@@ -287,23 +316,12 @@ func (r *TensorFusionWorkloadReconciler) scaleDownWorkers(ctx context.Context, w
 
 	for i := range pods {
 		podToDelete := &pods[i]
-		log.Info("Scaling down worker pod", "name", podToDelete.Name)
+		log.Info("Scaling down worker pod", "name", podToDelete.Name, "workload", workload.Name)
 		// Delete the pod with foreground deletion policy
 		// The finalizer will handle GPU resource cleanup
 		if err := r.deletePod(ctx, podToDelete); err != nil {
 			return err
 		}
-
-		labels := prometheus.Labels{
-			"worker":    podToDelete.Name,
-			"namespace": podToDelete.Namespace,
-			"pool":      workload.Spec.PoolName,
-		}
-		metrics.GpuTflopsRequest.Delete(labels)
-		metrics.GpuTflopsLimit.Delete(labels)
-		metrics.VramBytesRequest.Delete(labels)
-		metrics.VramBytesLimit.Delete(labels)
-		metrics.GpuCount.Delete(labels)
 	}
 	return nil
 }
@@ -339,7 +357,9 @@ func (r *TensorFusionWorkloadReconciler) handlePodGPUCleanup(ctx context.Context
 		return types.NamespacedName{Name: gpuName}
 	})
 	// Release GPU resources
-	if err := r.Allocator.Dealloc(ctx, workload.Spec.Resources.Requests, gpus); err != nil {
+	if err := r.Allocator.Dealloc(ctx,
+		tfv1.NameNamespace{Namespace: workload.Namespace, Name: workload.Name},
+		workload.Spec.Resources.Requests, gpus); err != nil {
 		log.Error(err, "Failed to release GPU resources, will retry", "gpus", gpus, "pod", pod.Name)
 		return false, err
 	}
@@ -367,39 +387,29 @@ func (r *TensorFusionWorkloadReconciler) deletePod(ctx context.Context, pod *cor
 // scaleUpWorkers handles the scaling up of worker pods
 func (r *TensorFusionWorkloadReconciler) scaleUpWorkers(ctx context.Context, workerGenerator *worker.WorkerGenerator, workload *tfv1.TensorFusionWorkload, count int, hash string) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
-
+	workloadNameNs := tfv1.NameNamespace{Namespace: workload.Namespace, Name: workload.Name}
 	// Create worker pods
 	for range count {
 		// Schedule GPU for the worker
-		gpus, err := r.Allocator.Alloc(ctx, workload.Spec.PoolName, workload.Spec.Resources.Requests, workload.Spec.GPUCount, workload.Spec.GPUModel)
+		gpus, err := r.Allocator.Alloc(ctx, workload.Spec.PoolName, workloadNameNs, workload.Spec.Resources.Requests, workload.Spec.GPUCount, workload.Spec.GPUModel)
 		if err != nil {
 			r.Recorder.Eventf(workload, corev1.EventTypeWarning, "ScheduleGPUFailed", "Failed to schedule GPU: %v", err)
 			return ctrl.Result{RequeueAfter: constants.PendingRequeueDuration}, nil
 		}
 
-		pod, err := r.tryStartWorker(ctx, workerGenerator, gpus, workload, hash)
+		_, err = r.tryStartWorker(ctx, workerGenerator, gpus, workload, hash)
 		if err != nil {
 			// Try to release all allocated GPUs if pod creation fails
 			gpus := lo.Map(gpus, func(gpu *tfv1.GPU, _ int) types.NamespacedName {
 				return client.ObjectKeyFromObject(gpu)
 			})
-			releaseErr := r.Allocator.Dealloc(ctx, workload.Spec.Resources.Requests, gpus)
+			releaseErr := r.Allocator.Dealloc(ctx, workloadNameNs, workload.Spec.Resources.Requests, gpus)
 			if releaseErr != nil {
 				log.Error(releaseErr, "Failed to release GPU after pod creation failure", "gpus", gpus)
 			}
 			return ctrl.Result{}, fmt.Errorf("create worker pod: %w", err)
 		}
 
-		labels := prometheus.Labels{
-			"worker":    pod.Name,
-			"namespace": pod.Namespace,
-			"pool":      workload.Spec.PoolName,
-		}
-		metrics.GpuTflopsRequest.With(labels).Set(workload.Spec.Resources.Requests.Tflops.AsApproximateFloat64())
-		metrics.GpuTflopsLimit.With(labels).Set(workload.Spec.Resources.Limits.Tflops.AsApproximateFloat64())
-		metrics.VramBytesRequest.With(labels).Set(workload.Spec.Resources.Requests.Vram.AsApproximateFloat64())
-		metrics.VramBytesLimit.With(labels).Set(workload.Spec.Resources.Limits.Vram.AsApproximateFloat64())
-		metrics.GpuCount.With(labels).Set(float64(workload.Spec.GPUCount))
 	}
 
 	return ctrl.Result{}, nil

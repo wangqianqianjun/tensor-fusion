@@ -45,6 +45,8 @@ import (
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/controller"
 	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
+	"github.com/NexusGPU/tensor-fusion/internal/metrics"
+	"github.com/NexusGPU/tensor-fusion/internal/portallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/server"
 	"github.com/NexusGPU/tensor-fusion/internal/server/router"
 	"github.com/NexusGPU/tensor-fusion/internal/version"
@@ -57,6 +59,8 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
+const LeaderElectionID = "85104305.tensor-fusion.ai"
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
@@ -64,6 +68,7 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+//nolint:gocyclo
 func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
@@ -72,6 +77,9 @@ func main() {
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
 	var gpuInfoConfig string
+	var metricsPath string
+	var nodeLevelPortRange string
+	var clusterLevelPortRange string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -85,6 +93,12 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&gpuInfoConfig, "gpu-info-config",
 		"/etc/tensor-fusion/gpu-info.yaml", "specify the path to gpuInfoConfig file")
+	flag.StringVar(&metricsPath, "metrics-path", "/logs/metrics.log", "specify the path to metrics file")
+	flag.StringVar(&nodeLevelPortRange, "host-port-range", "40000-42000",
+		"specify the port range for assigning ports to pre-scheduled Pods such as vGPU workers")
+	flag.StringVar(&clusterLevelPortRange, "cluster-host-port-range", "42000-62000",
+		"specify the port range for assigning ports to random Pods"+
+			" marked with `tensor-fusion.ai/host-port: auto` and `tensor-fusion.ai/port-name: ssh`")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -120,9 +134,13 @@ func main() {
 		ctrl.Log.Error(err, "unable to read gpuInfoConfig file")
 		gpuInfos = make([]config.GpuInfo, 0)
 	}
+	gpuPricingMap := make(map[string]float64)
+	for _, gpuInfo := range gpuInfos {
+		gpuPricingMap[gpuInfo.FullModelName] = gpuInfo.CostPerHour
+	}
 
 	// Watch configMap change with interval, check lastModifiedTime to reload gpuInfoConfig
-	watchGPUInfoChanges(gpuInfoConfig, &gpuInfos)
+	watchGPUInfoChanges(gpuInfoConfig, &gpuInfos, gpuPricingMap)
 
 	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
 	// More info:
@@ -154,7 +172,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "85104305.tensor-fusion.ai",
+		LeaderElectionID:       LeaderElectionID,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -174,12 +192,32 @@ func main() {
 
 	ctx := context.Background()
 
+	metricsRecorder := metrics.MetricsRecorder{
+		MetricsOutputPath:  metricsPath,
+		HourlyUnitPriceMap: gpuPricingMap,
+
+		// Worker level map will be updated by cluster reconcile
+		// Key is poolName, second level key is QoS level
+		WorkerUnitPriceMap: make(map[string]map[string]metrics.RawBillingPricing),
+	}
+
+	startMetricsRecorder(enableLeaderElection, mgr, metricsRecorder)
+
 	// Initialize GPU allocator and set up watches
 	allocator := gpuallocator.NewGpuAllocator(ctx, mgr.GetClient(), 10*time.Second)
 	if _, err = allocator.SetupWithManager(ctx, mgr); err != nil {
 		setupLog.Error(err, "unable to set up GPU allocator watches")
 		os.Exit(1)
 	}
+
+	// Initialize Port allocator and set up watches
+	portAllocator, err := portallocator.NewPortAllocator(ctx, mgr.GetClient(), nodeLevelPortRange, clusterLevelPortRange)
+	if err != nil {
+		setupLog.Error(err, "unable to set up port allocator")
+		os.Exit(1)
+	}
+	_ = portAllocator.SetupWithManager(ctx, mgr)
+
 	if err = (&controller.TensorFusionConnectionReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -199,16 +237,17 @@ func main() {
 
 	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err = webhookcorev1.SetupPodWebhookWithManager(mgr); err != nil {
+		if err = webhookcorev1.SetupPodWebhookWithManager(mgr, portAllocator); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Pod")
 			os.Exit(1)
 		}
 	}
 
 	if err = (&controller.TensorFusionClusterReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("TensorFusionCluster"),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Recorder:        mgr.GetEventRecorderFor("TensorFusionCluster"),
+		MetricsRecorder: &metricsRecorder,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TensorFusionCluster")
 		os.Exit(1)
@@ -255,8 +294,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err = (&controller.PodReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		PortAllocator: portAllocator,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)
@@ -278,11 +318,12 @@ func main() {
 		os.Exit(1)
 	}
 	if err = (&controller.TensorFusionWorkloadReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Allocator: allocator,
-		Recorder:  mgr.GetEventRecorderFor("tensorfusionworkload"),
-		GpuInfos:  &gpuInfos,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Allocator:     allocator,
+		Recorder:      mgr.GetEventRecorderFor("tensorfusionworkload"),
+		GpuInfos:      &gpuInfos,
+		PortAllocator: portAllocator,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TensorFusionWorkload")
 		os.Exit(1)
@@ -308,7 +349,12 @@ func main() {
 		setupLog.Error(err, "failed to create connection router")
 		os.Exit(1)
 	}
-	httpServer := server.NewHTTPServer(connectionRouter)
+	assignHostPortRouter, err := router.NewAssignHostPortRouter(ctx, portAllocator)
+	if err != nil {
+		setupLog.Error(err, "failed to create assign host port router")
+		os.Exit(1)
+	}
+	httpServer := server.NewHTTPServer(connectionRouter, assignHostPortRouter)
 	go func() {
 		err := httpServer.Run()
 		if err != nil {
@@ -339,7 +385,18 @@ func main() {
 	}
 }
 
-func watchGPUInfoChanges(gpuInfoConfig string, gpuInfos *[]config.GpuInfo) {
+func startMetricsRecorder(enableLeaderElection bool, mgr manager.Manager, metricsRecorder metrics.MetricsRecorder) {
+	if enableLeaderElection {
+		go func() {
+			<-mgr.Elected()
+			metricsRecorder.Start()
+		}()
+	} else {
+		go metricsRecorder.Start()
+	}
+}
+
+func watchGPUInfoChanges(gpuInfoConfig string, gpuInfos *[]config.GpuInfo, gpuPricingMap map[string]float64) {
 	var lastModTime time.Time
 	if fileInfo, err := os.Stat(gpuInfoConfig); err == nil {
 		lastModTime = fileInfo.ModTime()
@@ -367,6 +424,9 @@ func watchGPUInfoChanges(gpuInfoConfig string, gpuInfos *[]config.GpuInfo) {
 				}
 
 				*gpuInfos = updatedGpuInfos
+				for _, gpuInfo := range updatedGpuInfos {
+					gpuPricingMap[gpuInfo.FullModelName] = gpuInfo.CostPerHour
+				}
 				lastModTime = currentModTime
 				ctrl.Log.Info("gpuInfo reloaded successfully.", "gpuInfoConfig", gpuInfoConfig)
 			}

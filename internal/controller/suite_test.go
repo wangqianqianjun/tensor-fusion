@@ -35,6 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -47,7 +48,10 @@ import (
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
+	"github.com/NexusGPU/tensor-fusion/internal/metrics"
+	"github.com/NexusGPU/tensor-fusion/internal/portallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -60,16 +64,14 @@ var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
 var allocator *gpuallocator.GpuAllocator
-
-const (
-	timeout  = time.Second * 10
-	duration = time.Second * 5
-	interval = time.Millisecond * 100
-)
+var metricsRecorder *metrics.MetricsRecorder
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
-
+	SetDefaultEventuallyTimeout(6 * time.Second)
+	SetDefaultEventuallyPollingInterval(200 * time.Millisecond)
+	SetDefaultConsistentlyDuration(5 * time.Second)
+	SetDefaultConsistentlyPollingInterval(200 * time.Millisecond)
 	RunSpecs(t, "Controller Suite")
 }
 
@@ -119,12 +121,25 @@ var _ = BeforeSuite(func() {
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
+		Metrics: metricsserver.Options{
+			BindAddress: "0",
+		},
 	})
 	Expect(err).ToNot(HaveOccurred())
+
+	metricsRecorder = &metrics.MetricsRecorder{
+		MetricsOutputPath: "./metrics.log",
+		HourlyUnitPriceMap: map[string]float64{
+			"A100": 10,
+		},
+		WorkerUnitPriceMap: make(map[string]map[string]metrics.RawBillingPricing),
+	}
+
 	err = (&TensorFusionClusterReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("TensorFusionCluster"),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Recorder:        mgr.GetEventRecorderFor("TensorFusionCluster"),
+		MetricsRecorder: metricsRecorder,
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -142,12 +157,11 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
-	// err = (&GPUPoolCompactionReconciler{
-	// 	Client:   mgr.GetClient(),
-	// 	Scheme:   mgr.GetScheme(),
-	// 	Recorder: mgr.GetEventRecorderFor("GPUPoolCompaction"),
-	// }).SetupWithManager(mgr)
-	// Expect(err).ToNot(HaveOccurred())
+	portAllocator, err := portallocator.NewPortAllocator(ctx, mgr.GetClient(), "40000-42000", "42001-60000")
+	if err != nil {
+		Expect(err).ToNot(HaveOccurred())
+	}
+	_ = portAllocator.SetupWithManager(ctx, mgr)
 
 	err = (&GPUNodeClassReconciler{
 		Client: mgr.GetClient(),
@@ -162,8 +176,9 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&PodReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		PortAllocator: portAllocator,
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -180,7 +195,7 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
-	allocator = gpuallocator.NewGpuAllocator(ctx, mgr.GetClient(), 3*time.Second)
+	allocator = gpuallocator.NewGpuAllocator(ctx, mgr.GetClient(), 150*time.Millisecond)
 	_, err = allocator.SetupWithManager(ctx, mgr)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -198,11 +213,12 @@ var _ = BeforeSuite(func() {
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&TensorFusionWorkloadReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Allocator: allocator,
-		Recorder:  mgr.GetEventRecorderFor("TensorFusionWorkload"),
-		GpuInfos:  config.MockGpuInfo(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Allocator:     allocator,
+		Recorder:      mgr.GetEventRecorderFor("TensorFusionWorkload"),
+		GpuInfos:      config.MockGpuInfo(),
+		PortAllocator: portAllocator,
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -232,15 +248,21 @@ type TensorFusionEnv struct {
 func (c *TensorFusionEnv) GetCluster() *tfv1.TensorFusionCluster {
 	GinkgoHelper()
 	tfc := &tfv1.TensorFusionCluster{}
-	Eventually(func(g Gomega) {
-		g.Expect(k8sClient.Get(ctx, c.clusterKey, tfc)).Should(Succeed())
-	}).Should(Succeed())
+	Expect(k8sClient.Get(ctx, c.clusterKey, tfc)).Should(Succeed())
 	return tfc
 }
 
 func (c *TensorFusionEnv) UpdateCluster(tfc *tfv1.TensorFusionCluster) {
 	GinkgoHelper()
-	Expect(k8sClient.Update(ctx, tfc)).Should(Succeed())
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		latest := &tfv1.TensorFusionCluster{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(tfc), latest); err != nil {
+			return err
+		}
+		latest.Spec = tfc.Spec
+		return k8sClient.Update(ctx, latest)
+	})
+	Expect(err).Should(Succeed())
 }
 
 func (c *TensorFusionEnv) Cleanup() {
@@ -260,7 +282,7 @@ func (c *TensorFusionEnv) Cleanup() {
 		Eventually(func(g Gomega) {
 			pool := &tfv1.GPUPool{}
 			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: c.getPoolName(poolIndex)}, pool)).Should(HaveOccurred())
-		}, timeout, interval).Should(Succeed())
+		}).Should(Succeed())
 		delete(c.poolNodeMap, poolIndex)
 		c.poolCount--
 	}
@@ -269,7 +291,7 @@ func (c *TensorFusionEnv) Cleanup() {
 	Eventually(func(g Gomega) {
 		err := k8sClient.Get(ctx, c.clusterKey, tfc)
 		g.Expect(err).Should(HaveOccurred())
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 }
 
 func (c *TensorFusionEnv) GetGPUPoolList() *tfv1.GPUPoolList {
@@ -280,7 +302,7 @@ func (c *TensorFusionEnv) GetGPUPoolList() *tfv1.GPUPoolList {
 			constants.LabelKeyOwner: c.clusterKey.Name,
 		}))).Should(Succeed())
 		g.Expect(poolList.Items).Should(HaveLen(c.poolCount))
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 	return poolList
 }
 
@@ -289,7 +311,7 @@ func (c *TensorFusionEnv) GetGPUPool(poolIndex int) *tfv1.GPUPool {
 	pool := &tfv1.GPUPool{}
 	Eventually(func(g Gomega) {
 		g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: c.getPoolName(poolIndex)}, pool)).Should(Succeed())
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 	return pool
 }
 
@@ -301,7 +323,7 @@ func (c *TensorFusionEnv) GetGPUNodeList(poolIndex int) *tfv1.GPUNodeList {
 			fmt.Sprintf(constants.GPUNodePoolIdentifierLabelFormat, c.getPoolName(poolIndex)): "true",
 		}))).Should(Succeed())
 		g.Expect(nodeList.Items).Should(HaveLen(len(c.poolNodeMap[poolIndex])))
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 	return nodeList
 }
 
@@ -310,7 +332,7 @@ func (c *TensorFusionEnv) GetGPUNode(poolIndex int, nodeIndex int) *tfv1.GPUNode
 	node := &tfv1.GPUNode{}
 	Eventually(func(g Gomega) {
 		g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: c.getNodeName(poolIndex, nodeIndex)}, node)).Should(Succeed())
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 	return node
 }
 
@@ -321,7 +343,7 @@ func (c *TensorFusionEnv) DeleteGPUNode(poolIndex int, nodeIndex int) {
 	Expect(k8sClient.Delete(ctx, node)).Should(Succeed())
 	Eventually(func(g Gomega) {
 		g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: c.getNodeName(poolIndex, nodeIndex)}, node)).Should(HaveOccurred())
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 	delete(c.poolNodeMap[poolIndex], nodeIndex)
 }
 
@@ -333,7 +355,7 @@ func (c *TensorFusionEnv) GetNodeGpuList(poolIndex int, nodeIndex int) *tfv1.GPU
 			constants.LabelKeyOwner: c.getNodeName(poolIndex, nodeIndex),
 		}))).Should(Succeed())
 		g.Expect(gpuList.Items).Should(HaveLen(c.poolNodeMap[poolIndex][nodeIndex]))
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 	return gpuList
 }
 
@@ -356,7 +378,7 @@ func (c *TensorFusionEnv) GetPoolGpuList(poolIndex int) *tfv1.GPUList {
 			constants.GpuPoolKey: c.getPoolName(poolIndex),
 		}))).Should(Succeed())
 		g.Expect(gpuList.Items).Should(HaveLen(poolGpuCount))
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 	return gpuList
 }
 
@@ -377,7 +399,7 @@ func (c *TensorFusionEnv) UpdateHypervisorStatus() {
 					}),
 				)).Should(Succeed())
 				g.Expect(podList.Items).Should(HaveLen(len(c.poolNodeMap[poolIndex])))
-			}, timeout, interval).Should(Succeed())
+			}).Should(Succeed())
 			for _, pod := range podList.Items {
 				pod.Status.Phase = corev1.PodRunning
 				pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue})
@@ -453,6 +475,14 @@ func (b *TensorFusionEnvBuilder) Build() *TensorFusionEnv {
 			Name:      b.clusterKey.Name,
 			Namespace: b.clusterKey.Namespace,
 		},
+		Spec: tfv1.TensorFusionClusterSpec{
+			GPUPools: []tfv1.GPUPoolDefinition{
+				{
+					Name:         fmt.Sprintf("pool-%d", b.poolCount),
+					SpecTemplate: *config.MockGPUPoolSpec,
+				},
+			},
+		},
 	}
 
 	// construct pools
@@ -477,7 +507,7 @@ func (b *TensorFusionEnvBuilder) Build() *TensorFusionEnv {
 			constants.LabelKeyOwner: tfc.Name,
 		}))).Should(Succeed())
 		g.Expect(gpuPoolList.Items).Should(HaveLen(b.poolCount))
-	}, timeout, interval).Should(Succeed())
+	}).Should(Succeed())
 
 	// generate nodes
 	selectors := strings.Split(constants.InitialGPUNodeSelector, "=")
