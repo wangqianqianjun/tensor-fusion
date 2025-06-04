@@ -98,7 +98,7 @@ https://cdn.tensor-fusion.ai/GPU_Content_Migration.mp4
 - [ ] AI model registry and preloading, build your own private MaaS(Model-as-a-Service)
 - [ ] Advanced auto-scaling policies, scale to zero, rebalance of hot GPUs
 - [ ] Advanced observability features, detailed metrics & tracing/profiling of CUDA calls
-- [ ] Monetization your GPU cluster by multi-tenancy usage measurement & billing report
+- [ ] Monetize your GPU cluster by multi-tenancy usage measurement & billing report
 - [ ] Enterprise level high availability and resilience, support topology aware scheduling, GPU node auto failover etc.
 - [ ] Enterprise level security, complete on-premise deployment support, encryption in-transit & at-rest
 - [ ] Enterprise level compliance, SSO/SAML support, advanced audit, ReBAC control, SOC2 and other compliance reports available
