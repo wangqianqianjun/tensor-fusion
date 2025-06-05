@@ -40,15 +40,14 @@ controller:
   affinity:
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        podAffinityTerm:
+        - topologyKey: kubernetes.io/hostname
           labelSelector:
             matchExpressions:
-            - key: tensor-fusion.ai/component
-              operator: In
-              values:
-              - operator
-          topologyKey: "kubernetes.io/hostname"
+              - key: tensor-fusion.ai/component
+                operator: In
+                values:
+                  - operator
+
   livenessProbe:
     httpGet:
       path: /healthz
