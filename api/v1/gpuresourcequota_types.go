@@ -141,23 +141,23 @@ type GPUResourceUsage struct {
 type GPUResourceAvailablePercent struct {
 	// Available percentage for requests.tflops (0-100)
 	// +optional
-	RequestsTFlops *int32 `json:"requests.tflops,omitempty"`
+	RequestsTFlops *int64 `json:"requests.tflops,omitempty"`
 
 	// Available percentage for requests.vram (0-100)
 	// +optional
-	RequestsVRAM *int32 `json:"requests.vram,omitempty"`
+	RequestsVRAM *int64 `json:"requests.vram,omitempty"`
 
 	// Available percentage for limits.tflops (0-100)
 	// +optional
-	LimitsTFlops *int32 `json:"limits.tflops,omitempty"`
+	LimitsTFlops *int64 `json:"limits.tflops,omitempty"`
 
 	// Available percentage for limits.vram (0-100)
 	// +optional
-	LimitsVRAM *int32 `json:"limits.vram,omitempty"`
+	LimitsVRAM *int64 `json:"limits.vram,omitempty"`
 
 	// Available percentage for workers (0-100)
 	// +optional
-	Workers *int32 `json:"workers,omitempty"`
+	Workers *int64 `json:"workers,omitempty"`
 }
 
 // GPUResourceQuotaConditionType defines the condition types for GPUResourceQuota
@@ -172,14 +172,14 @@ const (
 	GPUResourceQuotaConditionAlertThresholdReached GPUResourceQuotaConditionType = "AlertThresholdReached"
 )
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-//+kubebuilder:resource:scope=Namespaced
-//+kubebuilder:printcolumn:name="Requests TFlops Used",type=string,JSONPath=`.status.used["requests.tflops"]`
-//+kubebuilder:printcolumn:name="Requests VRAM Used",type=string,JSONPath=`.status.used["requests.vram"]`
-//+kubebuilder:printcolumn:name="Workers Used",type=integer,JSONPath=`.status.used.workers`
-//+kubebuilder:printcolumn:name="Alert Threshold",type=integer,JSONPath=`.spec.total.alertThresholdPercent`
-//+kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Namespaced
+// +kubebuilder:printcolumn:name="Requests TFlops Used",type=string,JSONPath=`.status.used["requests.tflops"]`
+// +kubebuilder:printcolumn:name="Requests VRAM Used",type=string,JSONPath=`.status.used["requests.vram"]`
+// +kubebuilder:printcolumn:name="Workers Used",type=integer,JSONPath=`.status.used.workers`
+// +kubebuilder:printcolumn:name="Alert Threshold",type=integer,JSONPath=`.spec.total.alertThresholdPercent`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // GPUResourceQuota is the Schema for the gpuresourcequotas API
 type GPUResourceQuota struct {
@@ -190,7 +190,7 @@ type GPUResourceQuota struct {
 	Status GPUResourceQuotaStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:object:root=true
+// +kubebuilder:object:root=true
 
 // GPUResourceQuotaList contains a list of GPUResourceQuota
 type GPUResourceQuotaList struct {

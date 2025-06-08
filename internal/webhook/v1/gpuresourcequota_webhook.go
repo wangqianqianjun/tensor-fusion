@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -33,13 +34,28 @@ import (
 	tensorfusionv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 )
 
+// UsageCache represents cached resource usage for a namespace
+type UsageCache struct {
+	Usage      *tensorfusionv1.GPUResourceUsage
+	LastUpdate time.Time
+}
+
 // GPUResourceQuotaValidator validates TensorFusionWorkload against GPUResourceQuota
+// TODO: Performance optimization suggestions:
+// 1. Add caching mechanism to reduce frequent List operations
+// 2. Use Informer/Controller mechanism to maintain namespace-level resource usage statistics
+// 3. Consider using admission controller caching features
 type GPUResourceQuotaValidator struct {
 	Client  client.Client
 	decoder admission.Decoder
+
+	// TODO: Add caching mechanism (future optimization)
+	// usageCache map[string]*UsageCache  // namespace -> cached usage
+	// cacheTTL   time.Duration           // cache TTL, recommend 30-60 seconds
+	// cacheMu    sync.RWMutex           // cache read-write lock
 }
 
-//+kubebuilder:webhook:path=/validate-tensor-fusion-ai-v1-tensorfusionworkload,mutating=false,failurePolicy=fail,sideEffects=None,groups=tensor-fusion.ai,resources=tensorfusionworkloads,verbs=create;update,versions=v1,name=vgpuresourcequota.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-tensor-fusion-ai-v1-tensorfusionworkload,mutating=false,failurePolicy=fail,sideEffects=None,groups=tensor-fusion.ai,resources=tensorfusionworkloads,verbs=create;update,versions=v1,name=vgpuresourcequota.kb.io,admissionReviewVersions=v1
 
 // Handle validates TensorFusionWorkload against GPUResourceQuota
 func (v *GPUResourceQuotaValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
@@ -51,57 +67,57 @@ func (v *GPUResourceQuotaValidator) Handle(ctx context.Context, req admission.Re
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	// Get the GPUResourceQuota for this namespace
+	// Basic spec validation
+	if err := v.validateWorkloadSpec(workload); err != nil {
+		logger.Info("Workload spec validation failed", "error", err)
+		return admission.Denied(err.Error())
+	}
+
+	// Get GPUResourceQuota (if exists)
 	quota := &tensorfusionv1.GPUResourceQuota{}
 	quotaKey := types.NamespacedName{
 		Name:      workload.Namespace,
 		Namespace: workload.Namespace,
 	}
 
+	quotaExists := true
 	if err := v.Client.Get(ctx, quotaKey, quota); err != nil {
 		if errors.IsNotFound(err) {
-			// No quota defined for this namespace, allow the workload
-			logger.Info("No GPUResourceQuota found for namespace, allowing workload", "namespace", workload.Namespace)
-			return admission.Allowed("No quota defined")
+			// No quota definition found, skip quota-related validation
+			quotaExists = false
+			logger.Info("No GPUResourceQuota found for namespace, skipping quota validation", "namespace", workload.Namespace)
+		} else {
+			logger.Error(err, "Failed to get GPUResourceQuota")
+			return admission.Errored(http.StatusInternalServerError, err)
 		}
-		logger.Error(err, "Failed to get GPUResourceQuota")
-		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	// Apply default values if needed
-	if err := v.applyDefaults(workload, quota); err != nil {
-		logger.Error(err, "Failed to apply defaults")
-		return admission.Errored(http.StatusInternalServerError, err)
+	if quotaExists {
+		// Apply default values
+		v.applyDefaults(workload, quota)
+
+		// Validate single workload limits (no need to calculate total usage)
+		if err := v.validateSingleWorkloadLimits(workload, quota); err != nil {
+			logger.Info("Workload violates single workload limits", "error", err)
+			return admission.Denied(err.Error())
+		}
 	}
 
-	// Validate against single workload limits
-	if err := v.validateSingleWorkloadLimits(workload, quota); err != nil {
-		logger.Info("Workload violates single workload limits", "error", err)
+	// Business logic validation
+	if err := v.validateBusinessLogic(workload); err != nil {
+		logger.Info("Workload business logic validation failed", "error", err)
 		return admission.Denied(err.Error())
 	}
 
-	// Calculate current usage in the namespace
-	currentUsage, err := v.calculateCurrentUsage(ctx, workload.Namespace, workload.Name)
-	if err != nil {
-		logger.Error(err, "Failed to calculate current usage")
-		return admission.Errored(http.StatusInternalServerError, err)
-	}
-
-	// Calculate new workload resource requirements
-	newUsage := v.calculateWorkloadUsage(workload)
-
-	// Check if adding this workload would exceed quota
-	if err := v.validateTotalQuota(currentUsage, newUsage, quota); err != nil {
-		logger.Info("Workload would exceed total quota", "error", err)
-		return admission.Denied(err.Error())
-	}
+	// Note: Total quota validation is now performed in GPUAllocator.Alloc()
+	// If GPUAllocator allocation fails, TensorFusionWorkloadController will handle the failure
 
 	logger.Info("Workload validation passed", "workload", workload.Name, "namespace", workload.Namespace)
-	return admission.Allowed("Quota validation passed")
+	return admission.Allowed("Basic validation passed, quota will be checked during allocation")
 }
 
 // applyDefaults applies default values from quota to workload if not specified
-func (v *GPUResourceQuotaValidator) applyDefaults(workload *tensorfusionv1.TensorFusionWorkload, quota *tensorfusionv1.GPUResourceQuota) error {
+func (v *GPUResourceQuotaValidator) applyDefaults(workload *tensorfusionv1.TensorFusionWorkload, quota *tensorfusionv1.GPUResourceQuota) {
 	// Apply default TFlops if not specified
 	if workload.Spec.Resources.Requests.Tflops.IsZero() && quota.Spec.Single.DefaultRequest != nil && quota.Spec.Single.DefaultRequest.TFlops != nil {
 		workload.Spec.Resources.Requests.Tflops = *quota.Spec.Single.DefaultRequest.TFlops
@@ -120,8 +136,6 @@ func (v *GPUResourceQuotaValidator) applyDefaults(workload *tensorfusionv1.Tenso
 	if workload.Spec.Resources.Limits.Vram.IsZero() && quota.Spec.Single.Default != nil && quota.Spec.Single.Default.VRAM != nil {
 		workload.Spec.Resources.Limits.Vram = *quota.Spec.Single.Default.VRAM
 	}
-
-	return nil
 }
 
 // validateSingleWorkloadLimits validates workload against per-workload limits
@@ -177,6 +191,11 @@ func (v *GPUResourceQuotaValidator) validateSingleWorkloadLimits(workload *tenso
 
 // calculateCurrentUsage calculates current resource usage in the namespace
 func (v *GPUResourceQuotaValidator) calculateCurrentUsage(ctx context.Context, namespace, excludeWorkload string) (*tensorfusionv1.GPUResourceUsage, error) {
+	// TODO: cache?
+	// if cached := v.getCachedUsage(namespace); cached != nil {
+	//     return cached, nil
+	// }
+
 	workloadList := &tensorfusionv1.TensorFusionWorkloadList{}
 	if err := v.Client.List(ctx, workloadList, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("failed to list workloads: %w", err)
@@ -196,12 +215,14 @@ func (v *GPUResourceQuotaValidator) calculateCurrentUsage(ctx context.Context, n
 			continue
 		}
 
-		// Skip workloads that are not running or pending
-		if workload.Status.Phase != "Running" && workload.Status.Phase != "Pending" {
+		// Skip workloads that are terminated or failed (not consuming resources)
+		// Only exclude workloads that have explicitly finished and released resources
+		if workload.Status.Phase == "Succeeded" || workload.Status.Phase == "Failed" {
 			continue
 		}
 
 		// Add workload resources to usage
+		// This includes: Running, Pending, and any other active states
 		v.addWorkloadToUsage(usage, &workload)
 	}
 
@@ -348,5 +369,57 @@ func SetupGPUResourceQuotaWebhookWithManager(mgr ctrl.Manager) error {
 		&admission.Webhook{
 			Handler: validator,
 		})
+	return nil
+}
+
+// validateWorkloadSpec validates basic workload specification
+func (v *GPUResourceQuotaValidator) validateWorkloadSpec(workload *tensorfusionv1.TensorFusionWorkload) error {
+	// Validate required fields
+	if workload.Spec.PoolName == "" {
+		return fmt.Errorf("poolName is required")
+	}
+
+	// Validate resource request reasonableness
+	if workload.Spec.Resources.Requests.Tflops.IsZero() {
+		return fmt.Errorf("TFlops request must be greater than 0")
+	}
+
+	if workload.Spec.Resources.Requests.Vram.IsZero() {
+		return fmt.Errorf("VRAM request must be greater than 0")
+	}
+
+	// Validate replicas range
+	if workload.Spec.Replicas != nil && *workload.Spec.Replicas < 0 {
+		return fmt.Errorf("replicas must be non-negative")
+	}
+
+	// Validate GPU count
+	if workload.Spec.GPUCount == 0 {
+		return fmt.Errorf("GPUCount must be greater than 0")
+	}
+
+	return nil
+}
+
+func (v *GPUResourceQuotaValidator) validateBusinessLogic(workload *tensorfusionv1.TensorFusionWorkload) error {
+	// Validate requests <= limits
+	if !workload.Spec.Resources.Limits.Tflops.IsZero() &&
+		workload.Spec.Resources.Limits.Tflops.Cmp(workload.Spec.Resources.Requests.Tflops) < 0 {
+		return fmt.Errorf("TFlops limits must be >= requests")
+	}
+
+	if !workload.Spec.Resources.Limits.Vram.IsZero() &&
+		workload.Spec.Resources.Limits.Vram.Cmp(workload.Spec.Resources.Requests.Vram) < 0 {
+		return fmt.Errorf("VRAM limits must be >= requests")
+	}
+
+	// Validate QoS level
+	validQoS := map[string]bool{
+		"low": true, "medium": true, "high": true, "critical": true,
+	}
+	if workload.Spec.Qos != "" && !validQoS[string(workload.Spec.Qos)] {
+		return fmt.Errorf("invalid QoS level: %s", workload.Spec.Qos)
+	}
+
 	return nil
 }

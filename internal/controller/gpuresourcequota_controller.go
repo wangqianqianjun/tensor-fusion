@@ -40,12 +40,12 @@ type GPUResourceQuotaReconciler struct {
 	Recorder record.EventRecorder
 }
 
-//+kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpuresourcequotas,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpuresourcequotas/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpuresourcequotas/finalizers,verbs=update
-//+kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionworkloads,verbs=get;list;watch
-//+kubebuilder:rbac:groups=tensor-fusion.ai,resources=workloadprofiles,verbs=get;list;watch
-//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpuresourcequotas,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpuresourcequotas/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=gpuresourcequotas/finalizers,verbs=update
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionworkloads,verbs=get;list;watch
+// +kubebuilder:rbac:groups=tensor-fusion.ai,resources=workloadprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -63,15 +63,6 @@ func (r *GPUResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Validate that the quota name matches the namespace
-	if quota.Name != quota.Namespace {
-		logger.Error(fmt.Errorf("quota name must match namespace"), "Invalid quota name",
-			"quotaName", quota.Name, "namespace", quota.Namespace)
-		r.Recorder.Event(quota, "Warning", "InvalidName",
-			"GPUResourceQuota name must match the namespace it limits")
-		return ctrl.Result{}, nil
-	}
-
 	// Calculate current usage
 	usage, err := r.calculateUsage(ctx, quota.Namespace)
 	if err != nil {
@@ -86,7 +77,7 @@ func (r *GPUResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Check for alert conditions
-	r.checkAlertConditions(ctx, quota, usage)
+	r.checkAlertConditions(quota, usage)
 
 	// Requeue after 30 seconds to continuously monitor usage
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -175,7 +166,7 @@ func (r *GPUResourceQuotaReconciler) calculateAvailablePercent(quota *tensorfusi
 		total := quota.Spec.Total.RequestsTFlops.Value()
 		used := usage.RequestsTFlops.Value()
 		if total > 0 {
-			available := int32((total - used) * 100 / total)
+			available := (total - used) * 100 / total
 			if available < 0 {
 				available = 0
 			}
@@ -188,7 +179,7 @@ func (r *GPUResourceQuotaReconciler) calculateAvailablePercent(quota *tensorfusi
 		total := quota.Spec.Total.RequestsVRAM.Value()
 		used := usage.RequestsVRAM.Value()
 		if total > 0 {
-			available := int32((total - used) * 100 / total)
+			available := (total - used) * 100 / total
 			if available < 0 {
 				available = 0
 			}
@@ -201,7 +192,7 @@ func (r *GPUResourceQuotaReconciler) calculateAvailablePercent(quota *tensorfusi
 		total := quota.Spec.Total.LimitsTFlops.Value()
 		used := usage.LimitsTFlops.Value()
 		if total > 0 {
-			available := int32((total - used) * 100 / total)
+			available := (total - used) * 100 / total
 			if available < 0 {
 				available = 0
 			}
@@ -214,7 +205,7 @@ func (r *GPUResourceQuotaReconciler) calculateAvailablePercent(quota *tensorfusi
 		total := quota.Spec.Total.LimitsVRAM.Value()
 		used := usage.LimitsVRAM.Value()
 		if total > 0 {
-			available := int32((total - used) * 100 / total)
+			available := (total - used) * 100 / total
 			if available < 0 {
 				available = 0
 			}
@@ -224,10 +215,10 @@ func (r *GPUResourceQuotaReconciler) calculateAvailablePercent(quota *tensorfusi
 
 	// Calculate workers percentage
 	if quota.Spec.Total.Workers != nil && usage.Workers != nil {
-		total := *quota.Spec.Total.Workers
-		used := *usage.Workers
+		total := int64(*quota.Spec.Total.Workers)
+		used := int64(*usage.Workers)
 		if total > 0 {
-			available := int32((total - used) * 100 / total)
+			available := (total - used) * 100 / total
 			if available < 0 {
 				available = 0
 			}
@@ -325,26 +316,27 @@ func (r *GPUResourceQuotaReconciler) isQuotaExceeded(quota *tensorfusionv1.GPURe
 
 // isAlertThresholdReached checks if alert threshold is reached for any resource
 func (r *GPUResourceQuotaReconciler) isAlertThresholdReached(availablePercent *tensorfusionv1.GPUResourceAvailablePercent, threshold int32) bool {
-	if availablePercent.RequestsTFlops != nil && *availablePercent.RequestsTFlops < (100-threshold) {
+	thresholdInt64 := int64(100 - threshold)
+	if availablePercent.RequestsTFlops != nil && *availablePercent.RequestsTFlops < thresholdInt64 {
 		return true
 	}
-	if availablePercent.RequestsVRAM != nil && *availablePercent.RequestsVRAM < (100-threshold) {
+	if availablePercent.RequestsVRAM != nil && *availablePercent.RequestsVRAM < thresholdInt64 {
 		return true
 	}
-	if availablePercent.LimitsTFlops != nil && *availablePercent.LimitsTFlops < (100-threshold) {
+	if availablePercent.LimitsTFlops != nil && *availablePercent.LimitsTFlops < thresholdInt64 {
 		return true
 	}
-	if availablePercent.LimitsVRAM != nil && *availablePercent.LimitsVRAM < (100-threshold) {
+	if availablePercent.LimitsVRAM != nil && *availablePercent.LimitsVRAM < thresholdInt64 {
 		return true
 	}
-	if availablePercent.Workers != nil && *availablePercent.Workers < (100-threshold) {
+	if availablePercent.Workers != nil && *availablePercent.Workers < thresholdInt64 {
 		return true
 	}
 	return false
 }
 
 // checkAlertConditions checks and triggers alert events
-func (r *GPUResourceQuotaReconciler) checkAlertConditions(ctx context.Context, quota *tensorfusionv1.GPUResourceQuota, usage *tensorfusionv1.GPUResourceUsage) {
+func (r *GPUResourceQuotaReconciler) checkAlertConditions(quota *tensorfusionv1.GPUResourceQuota, usage *tensorfusionv1.GPUResourceUsage) {
 	alertThreshold := int32(95)
 	if quota.Spec.Total.AlertThresholdPercent != nil {
 		alertThreshold = *quota.Spec.Total.AlertThresholdPercent

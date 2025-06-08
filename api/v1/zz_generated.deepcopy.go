@@ -897,27 +897,27 @@ func (in *GPUResourceAvailablePercent) DeepCopyInto(out *GPUResourceAvailablePer
 	*out = *in
 	if in.RequestsTFlops != nil {
 		in, out := &in.RequestsTFlops, &out.RequestsTFlops
-		*out = new(int32)
+		*out = new(int64)
 		**out = **in
 	}
 	if in.RequestsVRAM != nil {
 		in, out := &in.RequestsVRAM, &out.RequestsVRAM
-		*out = new(int32)
+		*out = new(int64)
 		**out = **in
 	}
 	if in.LimitsTFlops != nil {
 		in, out := &in.LimitsTFlops, &out.LimitsTFlops
-		*out = new(int32)
+		*out = new(int64)
 		**out = **in
 	}
 	if in.LimitsVRAM != nil {
 		in, out := &in.LimitsVRAM, &out.LimitsVRAM
-		*out = new(int32)
+		*out = new(int64)
 		**out = **in
 	}
 	if in.Workers != nil {
 		in, out := &in.Workers, &out.Workers
-		*out = new(int32)
+		*out = new(int64)
 		**out = **in
 	}
 }
