@@ -134,11 +134,13 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	err = SetupPodWebhookWithManager(mgr, &portallocator.PortAllocator{
+	// Use a centralized webhook manager
+	webhookManager := NewWebhookManager(mgr, &portallocator.PortAllocator{
 		PortRangeStartCluster: 42000,
 		PortRangeEndCluster:   62000,
 		BitmapCluster:         make([]uint64, (62000-42000)/64+1),
 	})
+	err = webhookManager.SetupAllWebhooks()
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:webhook

@@ -193,23 +193,23 @@ spec:
                 properties:
                   limits.tflops:
                     description: Available percentage for limits.tflops (0-100)
-                    format: int32
+                    format: int64
                     type: integer
                   limits.vram:
                     description: Available percentage for limits.vram (0-100)
-                    format: int32
+                    format: int64
                     type: integer
                   requests.tflops:
                     description: Available percentage for requests.tflops (0-100)
-                    format: int32
+                    format: int64
                     type: integer
                   requests.vram:
                     description: Available percentage for requests.vram (0-100)
-                    format: int32
+                    format: int64
                     type: integer
                   workers:
                     description: Available percentage for workers (0-100)
-                    format: int32
+                    format: int64
                     type: integer
                 type: object
               conditions:
