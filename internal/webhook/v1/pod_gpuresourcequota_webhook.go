@@ -214,11 +214,8 @@ func (v *GPUResourceQuotaValidator) validateWorkloadSpec(workload *tensorfusionv
 		return fmt.Errorf("replicas must be non-negative")
 	}
 
-	// Validate GPU count - allow 0 for now as it might be set by the controller later
+	// Note: GPUCount is uint type, so it's always non-negative by definition
 	// The actual GPU allocation will be handled by the GPUAllocator
-	if workload.Spec.GPUCount < 0 {
-		return fmt.Errorf("GPUCount must be non-negative")
-	}
 
 	return nil
 }
