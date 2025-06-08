@@ -49,13 +49,7 @@ func (v *GPUResourceQuotaValidator) Handle(ctx context.Context, req admission.Re
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	// Basic spec validation
-	if err := v.validateWorkloadSpec(workload); err != nil {
-		logger.Info("Workload spec validation failed", "error", err)
-		return admission.Denied(err.Error())
-	}
-
-	// Get GPUResourceQuota (if exists)
+	// Get GPUResourceQuota (if exists) first, to apply defaults before validation
 	quota := &tensorfusionv1.GPUResourceQuota{}
 	quotaKey := types.NamespacedName{
 		Name:      workload.Namespace,
@@ -75,9 +69,17 @@ func (v *GPUResourceQuotaValidator) Handle(ctx context.Context, req admission.Re
 	}
 
 	if quotaExists {
-		// Apply default values
+		// Apply default values before validation
 		v.applyDefaults(workload, quota)
+	}
 
+	// Basic spec validation (after applying defaults)
+	if err := v.validateWorkloadSpec(workload); err != nil {
+		logger.Info("Workload spec validation failed", "error", err)
+		return admission.Denied(err.Error())
+	}
+
+	if quotaExists {
 		// Validate single workload limits
 		if err := v.validateSingleWorkloadLimits(workload, quota); err != nil {
 			logger.Info("Workload violates single workload limits", "error", err)
@@ -200,13 +202,17 @@ func (v *GPUResourceQuotaValidator) validateWorkloadSpec(workload *tensorfusionv
 		return fmt.Errorf("poolName is required")
 	}
 
-	// Validate resource request reasonableness
-	if workload.Spec.Resources.Requests.Tflops.IsZero() {
-		return fmt.Errorf("TFlops request must be greater than 0")
-	}
+	// Validate resource request reasonableness only if resources are specified
+	// Resources might be set later by the controller or from WorkloadProfile
+	if !workload.Spec.Resources.Requests.Tflops.IsZero() || !workload.Spec.Resources.Requests.Vram.IsZero() {
+		// If any resource is specified, validate that both are reasonable
+		if workload.Spec.Resources.Requests.Tflops.IsZero() {
+			return fmt.Errorf("TFlops request must be greater than 0 when resources are specified")
+		}
 
-	if workload.Spec.Resources.Requests.Vram.IsZero() {
-		return fmt.Errorf("VRAM request must be greater than 0")
+		if workload.Spec.Resources.Requests.Vram.IsZero() {
+			return fmt.Errorf("VRAM request must be greater than 0 when resources are specified")
+		}
 	}
 
 	// Validate replicas range
