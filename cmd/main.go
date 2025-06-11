@@ -241,10 +241,6 @@ func main() {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Pod")
 			os.Exit(1)
 		}
-		if err = webhookcorev1.SetupGPUResourceQuotaWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "GPUResourceQuota")
-			os.Exit(1)
-		}
 	}
 
 	if err = (&controller.TensorFusionClusterReconciler{
