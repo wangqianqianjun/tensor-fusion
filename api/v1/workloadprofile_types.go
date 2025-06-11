@@ -33,14 +33,16 @@ const (
 // WorkloadProfileSpec defines the desired state of WorkloadProfile.
 type WorkloadProfileSpec struct {
 	// +optional
+	// If replicas not set, it will be dynamic based on pending Pod
+	// If isLocalGPU set to true, replicas must be dynamic, and this field will be ignored
 	Replicas *int32 `json:"replicas,omitempty"`
 
 	// +optional
 	PoolName string `json:"poolName,omitempty"`
 
 	// +optional
+	Resources Resources `json:"resources"`
 
-	Resources Resources `json:"resources,omitempty"`
 	// +optional
 	// Qos defines the quality of service level for the client.
 	Qos QoSLevel `json:"qos,omitempty"`
@@ -57,9 +59,8 @@ type WorkloadProfileSpec struct {
 	GPUCount uint `json:"gpuCount,omitempty"`
 
 	// +optional
-	// TODO, not implemented
 	// This mode is only available when `is-local-gpu` set to true, in this mode, TensorFusion will also inject vGPU worker into init container, so that to achieve best performance, trade-off is user might by-pass the vGPU worker and using physical GPU directly
-	NoStandaloneWorkerMode bool `json:"noStandaloneWorkerMode,omitempty"`
+	StandaloneWorkerMode bool `json:"standaloneWorkerMode,omitempty"`
 
 	// +optional
 	// AutoScalingConfig configured here will override Pool's schedulingConfig
