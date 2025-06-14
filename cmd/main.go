@@ -27,6 +27,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
+	"github.com/NexusGPU/tensor-fusion/internal/alert"
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/controller"
 	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
@@ -49,38 +51,47 @@ import (
 	"github.com/NexusGPU/tensor-fusion/internal/portallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/server"
 	"github.com/NexusGPU/tensor-fusion/internal/server/router"
+	"github.com/NexusGPU/tensor-fusion/internal/utils"
 	"github.com/NexusGPU/tensor-fusion/internal/version"
 	webhookcorev1 "github.com/NexusGPU/tensor-fusion/internal/webhook/v1"
+	"sigs.k8s.io/yaml"
 	// +kubebuilder:scaffold:imports
 )
 
 var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	scheme            = runtime.NewScheme()
+	setupLog          = ctrl.Log.WithName("setup")
+	autoScaleEnabled  = false
+	alertCanBeEnabled = false
 )
 
 const LeaderElectionID = "85104305.tensor-fusion.ai"
 
+var metricsAddr string
+var enableLeaderElection bool
+var probeAddr string
+var secureMetrics bool
+var enableHTTP2 bool
+var tlsOpts []func(*tls.Config)
+var gpuInfoConfig string
+var metricsPath string
+var nodeLevelPortRange string
+var clusterLevelPortRange string
+var enableAlert bool
+var alertManagerAddr string
+var timeSeriesDB *metrics.TimeSeriesDB
+var configPath string
+var globalConfig config.GlobalConfig
+var alertEvaluator *alert.AlertEvaluator
+
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
 	utilruntime.Must(tfv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
 //nolint:gocyclo
 func main() {
-	var metricsAddr string
-	var enableLeaderElection bool
-	var probeAddr string
-	var secureMetrics bool
-	var enableHTTP2 bool
-	var tlsOpts []func(*tls.Config)
-	var gpuInfoConfig string
-	var metricsPath string
-	var nodeLevelPortRange string
-	var clusterLevelPortRange string
-
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -93,12 +104,23 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&gpuInfoConfig, "gpu-info-config",
 		"/etc/tensor-fusion/gpu-info.yaml", "specify the path to gpuInfoConfig file")
+	flag.StringVar(&configPath, "alert-rule-config",
+		"/etc/tensor-fusion/rules.yaml", "specify the path to alertRuleConfig file")
 	flag.StringVar(&metricsPath, "metrics-path", "/logs/metrics.log", "specify the path to metrics file")
 	flag.StringVar(&nodeLevelPortRange, "host-port-range", "40000-42000",
 		"specify the port range for assigning ports to pre-scheduled Pods such as vGPU workers")
 	flag.StringVar(&clusterLevelPortRange, "cluster-host-port-range", "42000-62000",
 		"specify the port range for assigning ports to random Pods"+
 			" marked with `tensor-fusion.ai/host-port: auto` and `tensor-fusion.ai/port-name: ssh`")
+	flag.BoolVar(&enableAlert, "enable-alert", false, "if turn on alert, "+
+		"TensorFusion will generate alerts with built-in rules, alert rules are managed in"+
+		" configMap `tensor-fusion-alert-rules` of TensorFusion system namespace")
+	flag.StringVar(&alertManagerAddr, "alert-manager-addr",
+		"alertmanager.tensor-fusion-sys.svc.cluster.local:9093",
+		"specify the alert manager address, TensorFusion will generate alerts with "+
+			"built-in rules if enabled alert, you can configure routers and receivers "+
+			"in your own alertmanager config, "+
+			"refer https://prometheus.io/docs/alerting/latest/configuration")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -106,6 +128,7 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	ctx := context.Background()
 
 	// print version info
 	setupLog.Info(version.VersionInfo())
@@ -129,23 +152,10 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
-	gpuInfos, err := config.LoadGpuInfoFromFile(gpuInfoConfig)
-	if err != nil {
-		ctrl.Log.Error(err, "unable to read gpuInfoConfig file")
-		gpuInfos = make([]config.GpuInfo, 0)
-	}
+	gpuInfos := make([]config.GpuInfo, 0)
 	gpuPricingMap := make(map[string]float64)
-	for _, gpuInfo := range gpuInfos {
-		gpuPricingMap[gpuInfo.FullModelName] = gpuInfo.CostPerHour
-	}
+	startWatchGPUInfoChanges(ctx, &gpuInfos, gpuPricingMap)
 
-	// Watch configMap change with interval, check lastModifiedTime to reload gpuInfoConfig
-	watchGPUInfoChanges(gpuInfoConfig, &gpuInfos, gpuPricingMap)
-
-	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
-	// More info:
-	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.1/pkg/metrics/server
-	// - https://book.kubebuilder.io/reference/metrics.html
 	metricsServerOptions := metricsserver.Options{
 		BindAddress:   metricsAddr,
 		SecureServing: secureMetrics,
@@ -153,15 +163,7 @@ func main() {
 	}
 
 	if secureMetrics {
-		// FilterProvider is used to protect the metrics endpoint with authn/authz.
-		// These configurations ensure that only authorized users and service accounts
-		// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
-		// https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.1/pkg/metrics/filters#WithAuthenticationAndAuthorization
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
-
-		// TODO(user): If CertDir, CertName, and KeyName are not specified, controller-runtime will automatically
-		// generate self-signed certificates for the metrics server. While convenient for development and testing,
-		// this setup is not recommended for production.
 	}
 
 	normalizeKubeConfigEnv()
@@ -190,7 +192,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	// global config includes metrics table ttl / alert rules
+	// when changed, handle with different functions
+	go setupTimeSeriesAndWatchGlobalConfigChanges(ctx, mgr)
+
+	if autoScaleEnabled {
+		// TODO init auto scale module
+		setupLog.Info("auto scale enabled")
+	}
 
 	metricsRecorder := metrics.MetricsRecorder{
 		MetricsOutputPath:  metricsPath,
@@ -393,6 +402,60 @@ func main() {
 	}
 }
 
+func setupTimeSeriesAndWatchGlobalConfigChanges(ctx context.Context, mgr manager.Manager) {
+	// config change will cause a full reloading
+	<-mgr.Elected()
+
+	timeSeriesDB = setupTimeSeriesDB()
+	if timeSeriesDB != nil {
+		if err := timeSeriesDB.SetupTables(mgr.GetClient()); err != nil {
+			setupLog.Error(err, "unable to init timeseries tables")
+		} else {
+			autoScaleEnabled = true
+			alertCanBeEnabled = true
+
+			setupLog.Info("time series db setup successfully.")
+		}
+	}
+
+	alertEvaluator = alert.NewAlertEvaluator(ctx, timeSeriesDB, globalConfig.AlertRules, alertManagerAddr)
+
+	ch, err := utils.WatchConfigFileChanges(ctx, configPath)
+	if err != nil {
+		ctrl.Log.Error(err, "unable to watch global config file, file may not exist",
+			"configPath", configPath)
+		return
+	}
+
+	for data := range ch {
+		ctrl.Log.Info("global config file loading")
+		err := yaml.Unmarshal(data, &globalConfig)
+		if err != nil {
+			ctrl.Log.Error(err, "unable to reload global config file, not valid config structure",
+				"configPath", configPath)
+			continue
+		}
+
+		// handle alert rules update
+		go func() {
+			if alertCanBeEnabled && enableAlert {
+				err = alertEvaluator.UpdateAlertRules(globalConfig.AlertRules)
+				if err != nil {
+					ctrl.Log.Error(err, "unable to update alert rules", "configPath", configPath)
+				}
+			}
+		}()
+
+		// handle metrics ttl update
+		go func() {
+			err = timeSeriesDB.SetTableTTL(globalConfig.MetricsTTL)
+			if err != nil {
+				ctrl.Log.Error(err, "unable to update metrics ttl", "ttl config", globalConfig.MetricsTTL)
+			}
+		}()
+	}
+}
+
 func startMetricsRecorder(enableLeaderElection bool, mgr manager.Manager, metricsRecorder metrics.MetricsRecorder) {
 	if enableLeaderElection {
 		go func() {
@@ -404,39 +467,25 @@ func startMetricsRecorder(enableLeaderElection bool, mgr manager.Manager, metric
 	}
 }
 
-func watchGPUInfoChanges(gpuInfoConfig string, gpuInfos *[]config.GpuInfo, gpuPricingMap map[string]float64) {
-	var lastModTime time.Time
-	if fileInfo, err := os.Stat(gpuInfoConfig); err == nil {
-		lastModTime = fileInfo.ModTime()
+func startWatchGPUInfoChanges(ctx context.Context, gpuInfos *[]config.GpuInfo, gpuPricingMap map[string]float64) {
+	ch, err := utils.WatchConfigFileChanges(ctx, gpuInfoConfig)
+	if err != nil {
+		ctrl.Log.Error(err, "unable to watch gpuInfo file, "+
+			"file may not exist, this error will cause billing not working", "gpuInfoConfig", gpuInfoConfig)
+		return
 	}
 
 	go func() {
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			// Check if file has been modified
-			fileInfo, err := os.Stat(gpuInfoConfig)
+		for data := range ch {
+			updatedGpuInfos := make([]config.GpuInfo, 0)
+			err := yaml.Unmarshal(data, &updatedGpuInfos)
 			if err != nil {
-				ctrl.Log.Error(err, "unable to stat gpuInfo file", "gpuInfoConfig", gpuInfoConfig)
+				ctrl.Log.Error(err, "unable to reload gpuInfo file, file is not valid yaml", "gpuInfoConfig", gpuInfoConfig)
 				continue
 			}
-
-			currentModTime := fileInfo.ModTime()
-			if currentModTime.After(lastModTime) {
-				ctrl.Log.Info("gpuInfo file modified, reloading.")
-				updatedGpuInfos, err := config.LoadGpuInfoFromFile(gpuInfoConfig)
-				if err != nil {
-					ctrl.Log.Error(err, "unable to reload gpuInfo file", "gpuInfoConfig", gpuInfoConfig)
-					continue
-				}
-
-				*gpuInfos = updatedGpuInfos
-				for _, gpuInfo := range updatedGpuInfos {
-					gpuPricingMap[gpuInfo.FullModelName] = gpuInfo.CostPerHour
-				}
-				lastModTime = currentModTime
-				ctrl.Log.Info("gpuInfo reloaded successfully.", "gpuInfoConfig", gpuInfoConfig)
+			*gpuInfos = updatedGpuInfos
+			for _, gpuInfo := range updatedGpuInfos {
+				gpuPricingMap[gpuInfo.FullModelName] = gpuInfo.CostPerHour
 			}
 		}
 	}()
@@ -453,4 +502,23 @@ func normalizeKubeConfigEnv() {
 		}
 		_ = os.Setenv("KUBECONFIG", strings.Replace(cfgPath, "~", home, 1))
 	}
+}
+
+// Setup GreptimeDB connection
+func setupTimeSeriesDB() *metrics.TimeSeriesDB {
+	timeSeriesDB := &metrics.TimeSeriesDB{}
+	connection := metrics.GreptimeDBConnection{
+		Host:     utils.GetEnvOrDefault("TSDB_MYSQL_HOST", "127.0.0.1"),
+		Port:     utils.GetEnvOrDefault("TSDB_MYSQL_PORT", "4002"),
+		User:     utils.GetEnvOrDefault("TSDB_MYSQL_USER", "root"),
+		Password: utils.GetEnvOrDefault("TSDB_MYSQL_PASSWORD", ""),
+		Database: utils.GetEnvOrDefault("TSDB_MYSQL_DATABASE", "public"),
+	}
+	if err := timeSeriesDB.Setup(connection); err != nil {
+		setupLog.Error(err, "unable to setup time series db, features including alert, "+
+			"autoScaling, rebalance won't work", "connection", connection.Host, "port",
+			connection.Port, "user", connection.User, "database", connection.Database)
+		return nil
+	}
+	return timeSeriesDB
 }

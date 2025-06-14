@@ -53,28 +53,35 @@ type GpuAllocator struct {
 	dirtyQueueLock sync.Mutex
 }
 
+// AllocRequest encapsulates all parameters needed for GPU allocation
+type AllocRequest struct {
+	// Name of the GPU pool to allocate from
+	PoolName string
+	// Namespace information for the workload
+	WorkloadNameNamespace tfv1.NameNamespace
+	// Resource requirements for the allocation
+	Request tfv1.Resource
+	// Number of GPUs to allocate
+	Count uint
+	// Specific GPU model to allocate, empty string means any model
+	GPUModel string
+}
+
 // Alloc allocates a request to a gpu or multiple gpus from the same node.
-func (s *GpuAllocator) Alloc(
-	ctx context.Context,
-	poolName string,
-	workloadNameNamespace tfv1.NameNamespace,
-	request tfv1.Resource,
-	count uint,
-	gpuModel string,
-) ([]*tfv1.GPU, error) {
+func (s *GpuAllocator) Alloc(ctx context.Context, req AllocRequest) ([]*tfv1.GPU, error) {
 	// Get GPUs from the pool using the in-memory store
-	poolGPUs := s.listGPUsFromPool(poolName)
+	poolGPUs := s.listGPUsFromPool(req.PoolName)
 
 	// Add SameNodeFilter if count > 1 to ensure GPUs are from the same node
-	filterRegistry := s.filterRegistry.With(filter.NewResourceFilter(request))
+	filterRegistry := s.filterRegistry.With(filter.NewResourceFilter(req.Request))
 
 	// Add GPU model filter if specified
-	if gpuModel != "" {
-		filterRegistry = filterRegistry.With(filter.NewGPUModelFilter(gpuModel))
+	if req.GPUModel != "" {
+		filterRegistry = filterRegistry.With(filter.NewGPUModelFilter(req.GPUModel))
 	}
 
-	if count > 1 {
-		filterRegistry = filterRegistry.With(filter.NewSameNodeFilter(count))
+	if req.Count > 1 {
+		filterRegistry = filterRegistry.With(filter.NewSameNodeFilter(req.Count))
 	}
 
 	// Apply the filters in sequence
@@ -84,12 +91,12 @@ func (s *GpuAllocator) Alloc(
 	}
 
 	if len(filteredGPUs) == 0 {
-		return nil, fmt.Errorf("no gpus available in pool %s after filtering", poolName)
+		return nil, fmt.Errorf("no gpus available in pool %s after filtering", req.PoolName)
 	}
 
 	pool := &tfv1.GPUPool{}
-	if err := s.Get(ctx, client.ObjectKey{Name: poolName}, pool); err != nil {
-		return nil, fmt.Errorf("get pool %s: %w", poolName, err)
+	if err := s.Get(ctx, client.ObjectKey{Name: req.PoolName}, pool); err != nil {
+		return nil, fmt.Errorf("get pool %s: %w", req.PoolName, err)
 	}
 
 	schedulingConfigTemplate := &tfv1.SchedulingConfigTemplate{}
@@ -100,7 +107,7 @@ func (s *GpuAllocator) Alloc(
 	}
 
 	strategy := NewStrategy(schedulingConfigTemplate.Spec.Placement.Mode)
-	selectedGPUs, err := strategy.SelectGPUs(filteredGPUs, count)
+	selectedGPUs, err := strategy.SelectGPUs(filteredGPUs, req.Count)
 	if err != nil {
 		return nil, fmt.Errorf("select GPU: %w", err)
 	}
@@ -121,11 +128,11 @@ func (s *GpuAllocator) Alloc(
 		}
 
 		// reduce available resource on the GPU status
-		gpu.Status.Available.Tflops.Sub(request.Tflops)
-		gpu.Status.Available.Vram.Sub(request.Vram)
+		gpu.Status.Available.Tflops.Sub(req.Request.Tflops)
+		gpu.Status.Available.Vram.Sub(req.Request.Vram)
 
 		if !appAdded {
-			addRunningApp(ctx, gpu, workloadNameNamespace)
+			addRunningApp(ctx, gpu, req.WorkloadNameNamespace)
 			appAdded = true
 		}
 
@@ -240,10 +247,6 @@ func (s *GpuAllocator) initGPUStore(ctx context.Context) error {
 	}
 
 	log.Info("GPU store initialized", "count", len(s.gpuStore))
-
-	// reconcile allocation state based on existing workers
-	s.reconcileAllocationState(ctx)
-	log.Info("GPU store data reconciled")
 	return nil
 }
 
@@ -317,18 +320,26 @@ func (s *GpuAllocator) SetupWithManager(ctx context.Context, mgr manager.Manager
 
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		// Create a context with cancel function for the sync loop
-		syncCtx, cancel := context.WithCancel(ctx)
+		_, cancel := context.WithCancel(ctx)
 		s.cancel = cancel
 		// Initialize the GPU store
 		if err := s.initGPUStore(ctx); err != nil {
 			log.Error(err, "Failed to initialize GPU store")
 			return err
 		}
-		// Start the background sync goroutine
-		go s.startSyncLoop(syncCtx)
 		readyCh <- struct{}{}
 		return nil
 	}))
+
+	go func() {
+		<-mgr.Elected()
+		// reconcile allocation state based on existing workers, run only when it's elected as leader
+		// and only if it's leader, it will start allocating resources to workers, and start sync loop here
+		s.reconcileAllocationState(ctx)
+		log.Info("GPU store data reconciled")
+		// Start the background sync goroutine
+		go s.startSyncLoop(ctx)
+	}()
 
 	return readyCh, err
 }

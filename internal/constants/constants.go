@@ -40,17 +40,17 @@ const (
 	GpuPoolKey                     = Domain + "/gpupool"
 
 	// Annotation key constants
-	GpuCountKey                      = Domain + "/gpu-count"
-	TFLOPSRequestAnnotation          = Domain + "/tflops-request"
-	VRAMRequestAnnotation            = Domain + "/vram-request"
-	TFLOPSLimitAnnotation            = Domain + "/tflops-limit"
-	VRAMLimitAnnotation              = Domain + "/vram-limit"
-	WorkloadProfileAnnotation        = Domain + "/client-profile"
-	InjectContainerAnnotation        = Domain + "/inject-container"
-	ReplicasAnnotation               = Domain + "/replicas"
-	GenWorkloadAnnotation            = Domain + "/generate-workload"
-	IsLocalGPUAnnotation             = Domain + "/is-local-gpu"
-	NoStandaloneWorkerModeAnnotation = Domain + "/no-standalone-worker-mode"
+	GpuCountKey                    = Domain + "/gpu-count"
+	TFLOPSRequestAnnotation        = Domain + "/tflops-request"
+	VRAMRequestAnnotation          = Domain + "/vram-request"
+	TFLOPSLimitAnnotation          = Domain + "/tflops-limit"
+	VRAMLimitAnnotation            = Domain + "/vram-limit"
+	WorkloadProfileAnnotation      = Domain + "/client-profile"
+	InjectContainerAnnotation      = Domain + "/inject-container"
+	ReplicasAnnotation             = Domain + "/replicas"
+	GenWorkloadAnnotation          = Domain + "/generate-workload"
+	IsLocalGPUAnnotation           = Domain + "/is-local-gpu"
+	StandaloneWorkerModeAnnotation = Domain + "/no-standalone-worker-mode"
 
 	GenHostPortLabel        = Domain + "/host-port"
 	GenHostPortLabelValue   = "auto"
@@ -81,13 +81,18 @@ const (
 	WorkerCudaUpLimitTflopsEnv = "TENSOR_FUSION_CUDA_UP_LIMIT_TFLOPS"
 	WorkerCudaUpLimitEnv       = "TENSOR_FUSION_CUDA_UP_LIMIT"
 	WorkerCudaMemLimitEnv      = "TENSOR_FUSION_CUDA_MEM_LIMIT"
-	WorkerPodNameEnv           = "POD_NAME"
+	WorkloadNameEnv            = "TENSOR_FUSION_WORKLOAD_NAME"
+	PoolNameEnv                = "TENSOR_FUSION_POOL_NAME"
+	PodNameEnv                 = "POD_NAME"
+	GPUNodeNameEnv             = "GPU_NODE_NAME"
 	NamespaceEnv               = "OPERATOR_NAMESPACE"
 	NamespaceDefaultVal        = "tensor-fusion-sys"
 
 	KubernetesHostNameLabel      = "kubernetes.io/hostname"
 	GiBToBytes                   = 1024 * 1024 * 1024
 	HypervisorServiceAccountName = "tensor-fusion-hypervisor-sa"
+
+	TSDBVersionConfigMap = "tensor-fusion-tsdb-version"
 
 	QoSLevelLow      = "low"
 	QoSLevelMedium   = "medium"
@@ -144,6 +149,7 @@ const (
 const TFDataPath = "/tmp/tensor-fusion/data"
 const DataVolumeName = "tf-data"
 const TensorFusionPoolManualCompaction = Domain + "/manual-compaction"
+const AlertJobName = "tensor-fusion"
 
 const (
 	LeaderInfoConfigMapName        = "tensor-fusion-operator-leader-info"
