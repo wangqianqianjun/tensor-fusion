@@ -22,10 +22,10 @@ type gpuScore struct {
 	score int32
 }
 
-func NewNodeAffinityFilter(nodeSelector *corev1.NodeSelector, preferred []corev1.PreferredSchedulingTerm) *NodeAffinityFilter {
+func NewNodeAffinityFilter(nodeAffinity *corev1.NodeAffinity) *NodeAffinityFilter {
 	return &NodeAffinityFilter{
-		nodeSelector: nodeSelector,
-		preferred:    preferred,
+		nodeSelector: nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution,
+		preferred:    nodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
 	}
 }
 

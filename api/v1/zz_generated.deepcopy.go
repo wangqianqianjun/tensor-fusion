@@ -2229,15 +2229,8 @@ func (in *WorkloadProfileSpec) DeepCopyInto(out *WorkloadProfileSpec) {
 	in.AutoScalingConfig.DeepCopyInto(&out.AutoScalingConfig)
 	if in.NodeAffinity != nil {
 		in, out := &in.NodeAffinity, &out.NodeAffinity
-		*out = new(corev1.NodeSelector)
+		*out = new(corev1.NodeAffinity)
 		(*in).DeepCopyInto(*out)
-	}
-	if in.Preferred != nil {
-		in, out := &in.Preferred, &out.Preferred
-		*out = make([]corev1.PreferredSchedulingTerm, len(*in))
-		for i := range *in {
-			(*in)[i].DeepCopyInto(&(*out)[i])
-		}
 	}
 }
 

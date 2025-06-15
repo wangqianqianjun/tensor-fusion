@@ -17,7 +17,7 @@ limitations under the License.
 package v1
 
 import (
-	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -71,11 +71,7 @@ type WorkloadProfileSpec struct {
 
 	// +optional
 	// NodeAffinity specifies the node affinity requirements for the workload
-	NodeAffinity *corev1.NodeSelector `json:"nodeAffinity,omitempty"`
-
-	// +optional
-	// Preferred specifies the preferred node selector terms for the workload
-	Preferred []corev1.PreferredSchedulingTerm `json:"preferred,omitempty"`
+	NodeAffinity *v1.NodeAffinity `json:"nodeAffinity,omitempty"`
 }
 
 // WorkloadProfileStatus defines the observed state of WorkloadProfile.
