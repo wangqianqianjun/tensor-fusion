@@ -87,7 +87,7 @@ func (s *GpuAllocator) Alloc(ctx context.Context, req AllocRequest) ([]*tfv1.GPU
 	}
 	// Add NodeAffinityFilter if specified
 	if req.NodeAffinity != nil {
-		filterRegistry = filterRegistry.With(filter.NewNodeAffinityFilter(req.NodeAffinity))
+		filterRegistry = filterRegistry.With(filter.NewNodeAffinityFilter(s.Client, req.NodeAffinity))
 	}
 
 	// Apply the filters in sequence

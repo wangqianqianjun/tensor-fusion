@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	schedulingcorev1 "k8s.io/component-helpers/scheduling/corev1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestNodeAffinityFilter(t *testing.T) {
@@ -228,9 +230,32 @@ func TestNodeAffinityFilter(t *testing.T) {
 		},
 	}
 
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filter := NewNodeAffinityFilter(tt.nodeSelector, tt.preferred)
+			// Build fake nodes corresponding to GPUs to populate the cache
+			var objs []runtime.Object
+			for i := range tt.gpus {
+				gpu := &tt.gpus[i]
+				if nodeName, ok := gpu.Labels[constants.LabelKeyOwner]; ok {
+					node := &corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:   nodeName,
+							Labels: gpu.Status.NodeSelector,
+						},
+					}
+					objs = append(objs, node)
+				}
+			}
+
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+
+			filter := NewNodeAffinityFilter(fakeClient, &corev1.NodeAffinity{
+				RequiredDuringSchedulingIgnoredDuringExecution:  tt.nodeSelector,
+				PreferredDuringSchedulingIgnoredDuringExecution: tt.preferred,
+			})
 			got, err := filter.Filter(context.Background(), tt.gpus)
 			if tt.wantErr {
 				assert.Error(t, err)
