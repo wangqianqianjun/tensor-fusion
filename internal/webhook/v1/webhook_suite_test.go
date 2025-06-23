@@ -140,6 +140,8 @@ var _ = BeforeSuite(func() {
 		PortRangeEndCluster:   62000,
 		BitmapCluster:         make([]uint64, (62000-42000)/64+1),
 	})
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:webhook
 
 	go func() {
