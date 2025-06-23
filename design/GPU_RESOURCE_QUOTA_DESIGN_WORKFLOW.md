@@ -48,9 +48,9 @@ The GPU Resource Quota System provides comprehensive resource management for GPU
                     └─────────────────┘
 ```
 
-### Component Responsibilities
+### Component Responsibilities and Data Flow
 
-#### 1. **QuotaStore** (Core Engine)
+#### 1. **QuotaStore** (Core Engine - Authoritative State Manager)
 ```go
 type QuotaStore struct {
     client.Client
@@ -58,15 +58,19 @@ type QuotaStore struct {
     storeMutex     sync.RWMutex                 // thread safety
     dirtyQuotas    map[string]struct{}          // sync optimization
     dirtyQuotaLock sync.Mutex
+    calculator     *quota.Calculator            // shared calculation logic
 }
 ```
 
 **Responsibilities:**
-- Maintain in-memory quota cache for fast access
-- Enforce atomic allocation/deallocation operations
-- Validate quota constraints (single + total limits)
-- Handle state reconciliation from actual workloads
-- Sync quota status back to Kubernetes
+- **Real-time Quota Enforcement**: Atomic allocation/deallocation operations
+- **Authoritative State Management**: Single source of truth for quota status
+- **Pod-based Usage Tracking**: Calculate usage from actual running Pod annotations
+- **Kubernetes Status Updates**: Exclusive responsibility for updating quota status
+- **State Reconciliation**: Rebuild quota state from actual cluster resources
+- **Performance Optimization**: In-memory cache with dirty flag batching
+
+**Data Sources**: Actual running Pods with resource annotations
 
 #### 2. **GpuAllocator** (Orchestrator)
 **Responsibilities:**
@@ -74,13 +78,43 @@ type QuotaStore struct {
 - Integrate quota checking into allocation pipeline
 - Manage allocation state synchronization
 - Handle concurrent allocation requests
+- Ensure atomic GPU + quota allocation operations
 
-#### 3. **GPUResourceQuotaReconciler** (Controller)
+#### 3. **GPUResourceQuotaReconciler** (Controller - Monitoring and Alerting)
 **Responsibilities:**
-- Monitor quota usage from TensorFusionWorkload objects
-- Update quota status and conditions in Kubernetes
-- Generate alert events when thresholds are exceeded
-- Provide external observability into quota state
+- **Expected State Monitoring**: Calculate usage from TensorFusionWorkload objects
+- **Alert Generation**: Generate events when thresholds are exceeded
+- **Trend Analysis**: Long-term monitoring for governance and planning
+- **Discrepancy Detection**: Monitor differences between expected vs actual usage
+
+**Data Sources**: TensorFusionWorkload CRD objects (expected/declared state)
+
+**Critical Design Decision**: The controller does NOT update quota status to avoid race conditions. QuotaStore is the single authoritative source for quota status updates.
+
+### Data Flow and Responsibility Separation
+
+```
+Expected State (Declarative)     Real State (Actual)
+         │                             │
+         ▼                             ▼
+┌─────────────────┐            ┌─────────────────┐
+│    Controller   │            │   QuotaStore    │
+│                 │            │                 │
+│ • TensorFusion  │            │ • Running Pods  │
+│   Workloads     │            │ • Annotations   │
+│ • Alert Events  │            │ • K8s Status    │
+│ • Trend Monitor │            │ • Real Usage    │
+└─────────────────┘            └─────────────────┘
+         │                             │
+         └─────────────┬─────────────────┘
+                       ▼
+                ┌─────────────────┐
+                │  Discrepancy    │
+                │   Detection     │
+                │ (Expected vs    │
+                │    Actual)      │
+                └─────────────────┘
+```
 
 ## Data Models
 
@@ -158,6 +192,7 @@ sequenceDiagram
     participant Client
     participant GpuAllocator
     participant QuotaStore
+    participant Calculator
     participant K8sAPI
 
     Client->>GpuAllocator: Alloc(AllocRequest)
@@ -169,19 +204,26 @@ sequenceDiagram
     Note over GpuAllocator: Phase 2: Atomic Allocation
     GpuAllocator->>GpuAllocator: Lock storeMutex
     GpuAllocator->>QuotaStore: checkQuotaAvailable()
+    QuotaStore->>Calculator: Check single limits
+    QuotaStore->>Calculator: Check total limits
     
     alt Quota Available
+        Calculator-->>QuotaStore: Validation OK
         QuotaStore-->>GpuAllocator: OK
         GpuAllocator->>GpuAllocator: Allocate GPUs
         GpuAllocator->>QuotaStore: AllocateQuota()
-        QuotaStore->>QuotaStore: Update usage/available
+        QuotaStore->>Calculator: NewResourceOperation()
+        QuotaStore->>Calculator: ApplyUsageOperation()
         QuotaStore->>QuotaStore: Mark dirty for sync
         GpuAllocator->>GpuAllocator: Unlock storeMutex
         GpuAllocator-->>Client: Success + Allocated GPUs
         
-        Note over QuotaStore: Async sync to K8s
-        QuotaStore->>K8sAPI: Update quota status
+        Note over QuotaStore: Async sync to K8s (authoritative)
+        QuotaStore->>Calculator: CalculateAvailablePercent()
+        QuotaStore->>Calculator: CreateStandardConditions()
+        QuotaStore->>K8sAPI: Update quota status (exclusive)
     else Quota Exceeded
+        Calculator-->>QuotaStore: Validation Failed
         QuotaStore-->>GpuAllocator: QuotaExceededError
         GpuAllocator->>GpuAllocator: Unlock storeMutex
         GpuAllocator-->>Client: Error

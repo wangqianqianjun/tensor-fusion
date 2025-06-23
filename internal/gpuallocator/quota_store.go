@@ -7,6 +7,7 @@ import (
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
+	"github.com/NexusGPU/tensor-fusion/internal/quota"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +26,9 @@ type QuotaStore struct {
 	// Queue for tracking modified quotas that need to be synced to K8s
 	dirtyQuotas    map[string]struct{}
 	dirtyQuotaLock sync.Mutex
+
+	// Calculator for shared quota computation logic
+	calculator *quota.Calculator
 }
 
 // QuotaStoreEntry represents quota information in memory
@@ -45,6 +49,7 @@ func NewQuotaStore(client client.Client) *QuotaStore {
 		Client:      client,
 		quotaStore:  make(map[string]*QuotaStoreEntry),
 		dirtyQuotas: make(map[string]struct{}),
+		calculator:  quota.NewCalculator(),
 	}
 }
 
@@ -201,30 +206,11 @@ func (qs *QuotaStore) AllocateQuota(namespace string, req AllocRequest) {
 		return
 	}
 
-	replicas := int32(req.Count)
+	// Create resource operation using calculator
+	operation := qs.calculator.NewResourceOperation(req.Request, int32(req.Count))
 
-	// Calculate total request for all replicas
-	totalTFlopsRequest := req.Request.Tflops.DeepCopy()
-	totalTFlopsRequest.Set(totalTFlopsRequest.Value() * int64(replicas))
-
-	totalVRAMRequest := req.Request.Vram.DeepCopy()
-	totalVRAMRequest.Set(totalVRAMRequest.Value() * int64(replicas))
-
-	// Update current usage (increase)
-	qs.safeAdd(entry.currentUsage.RequestsTFlops, totalTFlopsRequest)
-	qs.safeAdd(entry.currentUsage.RequestsVRAM, totalVRAMRequest)
-	qs.safeAdd(entry.currentUsage.LimitsTFlops, totalTFlopsRequest) // Assume limits = requests
-	qs.safeAdd(entry.currentUsage.LimitsVRAM, totalVRAMRequest)
-	*entry.currentUsage.Workers += replicas
-
-	// Update available quota (decrease)
-	qs.safeSub(entry.available.RequestsTFlops, totalTFlopsRequest)
-	qs.safeSub(entry.available.RequestsVRAM, totalVRAMRequest)
-	qs.safeSub(entry.available.LimitsTFlops, totalTFlopsRequest)
-	qs.safeSub(entry.available.LimitsVRAM, totalVRAMRequest)
-	if entry.available.Workers != nil {
-		*entry.available.Workers -= replicas
-	}
+	// Apply allocation operation atomically
+	qs.calculator.ApplyUsageOperation(entry.currentUsage, entry.available, operation, true)
 
 	// Mark quota as dirty for sync to K8s
 	qs.markQuotaDirty(namespace)
@@ -241,47 +227,14 @@ func (qs *QuotaStore) DeallocateQuota(namespace string, request tfv1.Resource, r
 		return
 	}
 
-	// Calculate total request for all replicas
-	totalTFlopsRequest := request.Tflops.DeepCopy()
-	totalTFlopsRequest.Set(totalTFlopsRequest.Value() * int64(replicas))
-
-	totalVRAMRequest := request.Vram.DeepCopy()
-	totalVRAMRequest.Set(totalVRAMRequest.Value() * int64(replicas))
+	// Create resource operation using calculator
+	operation := qs.calculator.NewResourceOperation(request, replicas)
 
 	// Calculate actual deallocation amounts (clamped to current usage)
-	actualTFlopsDealloc := totalTFlopsRequest.DeepCopy()
-	if entry.currentUsage.RequestsTFlops != nil && entry.currentUsage.RequestsTFlops.Cmp(totalTFlopsRequest) < 0 {
-		actualTFlopsDealloc = entry.currentUsage.RequestsTFlops.DeepCopy()
-	}
+	actualOperation := qs.calculator.CalculateActualDeallocation(entry.currentUsage, operation)
 
-	actualVRAMDealloc := totalVRAMRequest.DeepCopy()
-	if entry.currentUsage.RequestsVRAM != nil && entry.currentUsage.RequestsVRAM.Cmp(totalVRAMRequest) < 0 {
-		actualVRAMDealloc = entry.currentUsage.RequestsVRAM.DeepCopy()
-	}
-
-	actualWorkersDealloc := min(*entry.currentUsage.Workers, replicas)
-
-	// Update current usage (decrease) with bounds checking
-	qs.safeSub(entry.currentUsage.RequestsTFlops, totalTFlopsRequest)
-	qs.safeSub(entry.currentUsage.RequestsVRAM, totalVRAMRequest)
-	qs.safeSub(entry.currentUsage.LimitsTFlops, totalTFlopsRequest)
-	qs.safeSub(entry.currentUsage.LimitsVRAM, totalVRAMRequest)
-
-	// Ensure workers don't go negative
-	if *entry.currentUsage.Workers >= replicas {
-		*entry.currentUsage.Workers -= replicas
-	} else {
-		*entry.currentUsage.Workers = 0
-	}
-
-	// Update available quota (increase by actual deallocated amounts only)
-	qs.safeAdd(entry.available.RequestsTFlops, actualTFlopsDealloc)
-	qs.safeAdd(entry.available.RequestsVRAM, actualVRAMDealloc)
-	qs.safeAdd(entry.available.LimitsTFlops, actualTFlopsDealloc)
-	qs.safeAdd(entry.available.LimitsVRAM, actualVRAMDealloc)
-	if entry.available.Workers != nil {
-		*entry.available.Workers += actualWorkersDealloc
-	}
+	// Apply deallocation operation atomically
+	qs.calculator.ApplyUsageOperation(entry.currentUsage, entry.available, actualOperation, false)
 
 	// Mark quota as dirty for sync to K8s
 	qs.markQuotaDirty(namespace)
@@ -317,26 +270,11 @@ func (qs *QuotaStore) initQuotaStore(ctx context.Context) error {
 			continue
 		}
 
-		// Initialize current usage to zero
-		currentUsage := &tfv1.GPUResourceUsage{
-			RequestsTFlops: resource.NewQuantity(0, resource.DecimalSI),
-			RequestsVRAM:   resource.NewQuantity(0, resource.BinarySI),
-			LimitsTFlops:   resource.NewQuantity(0, resource.DecimalSI),
-			LimitsVRAM:     resource.NewQuantity(0, resource.BinarySI),
-			Workers:        new(int32),
-		}
+		// Initialize current usage to zero using calculator
+		currentUsage := qs.calculator.CreateZeroUsage()
 
-		// Initialize available quota to total quota with safe defaults
-		available := &tfv1.GPUResourceUsage{
-			RequestsTFlops: qs.safeDeepCopy(quota.Spec.Total.RequestsTFlops),
-			RequestsVRAM:   qs.safeDeepCopy(quota.Spec.Total.RequestsVRAM),
-			LimitsTFlops:   qs.safeDeepCopy(quota.Spec.Total.LimitsTFlops),
-			LimitsVRAM:     qs.safeDeepCopy(quota.Spec.Total.LimitsVRAM),
-			Workers:        new(int32),
-		}
-		if quota.Spec.Total.Workers != nil {
-			*available.Workers = *quota.Spec.Total.Workers
-		}
+		// Initialize available quota to total quota using calculator
+		available := qs.calculator.CopyUsageToTotal(quota)
 
 		qs.quotaStore[namespace] = &QuotaStoreEntry{
 			quota:        quota.DeepCopy(),
@@ -351,6 +289,7 @@ func (qs *QuotaStore) initQuotaStore(ctx context.Context) error {
 
 // validateQuotaConfig validates quota configuration
 func (qs *QuotaStore) validateQuotaConfig(quota *tfv1.GPUResourceQuota) error {
+	// Check for negative values
 	if quota.Spec.Total.RequestsTFlops != nil && quota.Spec.Total.RequestsTFlops.Sign() < 0 {
 		return fmt.Errorf("requests.tflops cannot be negative")
 	}
@@ -366,16 +305,28 @@ func (qs *QuotaStore) validateQuotaConfig(quota *tfv1.GPUResourceQuota) error {
 	if quota.Spec.Total.Workers != nil && *quota.Spec.Total.Workers < 0 {
 		return fmt.Errorf("workers cannot be negative")
 	}
-	return nil
-}
 
-// safeDeepCopy safely deep copies a resource quantity, returning nil if input is nil
-func (qs *QuotaStore) safeDeepCopy(q *resource.Quantity) *resource.Quantity {
-	if q == nil {
-		return nil
+	// Validate limits >= requests
+	if quota.Spec.Total.RequestsTFlops != nil && quota.Spec.Total.LimitsTFlops != nil {
+		if quota.Spec.Total.LimitsTFlops.Cmp(*quota.Spec.Total.RequestsTFlops) < 0 {
+			return fmt.Errorf("limits.tflops cannot be less than requests.tflops")
+		}
 	}
-	copy := q.DeepCopy()
-	return &copy
+	if quota.Spec.Total.RequestsVRAM != nil && quota.Spec.Total.LimitsVRAM != nil {
+		if quota.Spec.Total.LimitsVRAM.Cmp(*quota.Spec.Total.RequestsVRAM) < 0 {
+			return fmt.Errorf("limits.vram cannot be less than requests.vram")
+		}
+	}
+
+	// Validate alert threshold percentage range
+	if quota.Spec.Total.AlertThresholdPercent != nil {
+		threshold := *quota.Spec.Total.AlertThresholdPercent
+		if threshold < 0 || threshold > 100 {
+			return fmt.Errorf("alertThresholdPercent must be between 0 and 100, got %d", threshold)
+		}
+	}
+
+	return nil
 }
 
 // reconcileQuotaStore rebuilds quota usage from actual worker pods
@@ -394,33 +345,11 @@ func (qs *QuotaStore) reconcileQuotaStore(ctx context.Context, workerPods []v1.P
 	defer qs.storeMutex.Unlock()
 
 	for namespace, entry := range qs.quotaStore {
-		// Reset current usage
-		entry.currentUsage.RequestsTFlops.Set(0)
-		entry.currentUsage.RequestsVRAM.Set(0)
-		entry.currentUsage.LimitsTFlops.Set(0)
-		entry.currentUsage.LimitsVRAM.Set(0)
-		*entry.currentUsage.Workers = 0
+		// Reset current usage using calculator
+		entry.currentUsage = qs.calculator.CreateZeroUsage()
 
-		// Reset available to total
-		if entry.quota.Spec.Total.RequestsTFlops != nil {
-			copy := entry.quota.Spec.Total.RequestsTFlops.DeepCopy()
-			entry.available.RequestsTFlops = &copy
-		}
-		if entry.quota.Spec.Total.RequestsVRAM != nil {
-			copy := entry.quota.Spec.Total.RequestsVRAM.DeepCopy()
-			entry.available.RequestsVRAM = &copy
-		}
-		if entry.quota.Spec.Total.LimitsTFlops != nil {
-			copy := entry.quota.Spec.Total.LimitsTFlops.DeepCopy()
-			entry.available.LimitsTFlops = &copy
-		}
-		if entry.quota.Spec.Total.LimitsVRAM != nil {
-			copy := entry.quota.Spec.Total.LimitsVRAM.DeepCopy()
-			entry.available.LimitsVRAM = &copy
-		}
-		if entry.quota.Spec.Total.Workers != nil {
-			*entry.available.Workers = *entry.quota.Spec.Total.Workers
-		}
+		// Reset available to total using calculator
+		entry.available = qs.calculator.CopyUsageToTotal(entry.quota)
 
 		qs.markQuotaDirty(namespace)
 	}
@@ -474,21 +403,15 @@ func (qs *QuotaStore) addPodToUsage(entry *QuotaStoreEntry, pod *v1.Pod) {
 		return // Skip pods with invalid resource annotations
 	}
 
-	// Update current usage
-	qs.safeAdd(entry.currentUsage.RequestsTFlops, tflopsRequest)
-	qs.safeAdd(entry.currentUsage.RequestsVRAM, vramRequest)
-	qs.safeAdd(entry.currentUsage.LimitsTFlops, tflopsRequest) // Assume limits = requests
-	qs.safeAdd(entry.currentUsage.LimitsVRAM, vramRequest)
-	*entry.currentUsage.Workers += 1
-
-	// Update available quota
-	qs.safeSub(entry.available.RequestsTFlops, tflopsRequest)
-	qs.safeSub(entry.available.RequestsVRAM, vramRequest)
-	qs.safeSub(entry.available.LimitsTFlops, tflopsRequest)
-	qs.safeSub(entry.available.LimitsVRAM, vramRequest)
-	if entry.available.Workers != nil {
-		*entry.available.Workers -= 1
+	// Create resource operation from pod resource
+	podResource := tfv1.Resource{
+		Tflops: tflopsRequest,
+		Vram:   vramRequest,
 	}
+	operation := qs.calculator.NewResourceOperation(podResource, 1)
+
+	// Apply allocation operation for this pod
+	qs.calculator.ApplyUsageOperation(entry.currentUsage, entry.available, operation, true)
 }
 
 // markQuotaDirty marks a quota as dirty for sync to K8s
@@ -496,6 +419,13 @@ func (qs *QuotaStore) markQuotaDirty(namespace string) {
 	qs.dirtyQuotaLock.Lock()
 	defer qs.dirtyQuotaLock.Unlock()
 	qs.dirtyQuotas[namespace] = struct{}{}
+}
+
+// clearQuotaDirty clears a quota from dirty queue after successful sync
+func (qs *QuotaStore) clearQuotaDirty(namespace string) {
+	qs.dirtyQuotaLock.Lock()
+	defer qs.dirtyQuotaLock.Unlock()
+	delete(qs.dirtyQuotas, namespace)
 }
 
 // GetQuotaStatus returns current quota status for a namespace
@@ -521,7 +451,7 @@ func (qs *QuotaStore) syncQuotasToK8s(ctx context.Context) {
 	for namespace := range qs.dirtyQuotas {
 		dirtyNamespaces = append(dirtyNamespaces, namespace)
 	}
-	qs.dirtyQuotas = make(map[string]struct{})
+	// Don't clear dirty quotas here - clear only after successful sync
 	qs.dirtyQuotaLock.Unlock()
 
 	if len(dirtyNamespaces) == 0 {
@@ -537,8 +467,8 @@ func (qs *QuotaStore) syncQuotasToK8s(ctx context.Context) {
 			continue
 		}
 
-		// Calculate available percentages
-		availablePercent := qs.calculateAvailablePercent(entry)
+		// Calculate available percentages using calculator
+		availablePercent := qs.calculator.CalculateAvailablePercent(entry.quota, entry.currentUsage)
 
 		// Update the quota status
 		quotaCopy := entry.quota.DeepCopy()
@@ -547,163 +477,36 @@ func (qs *QuotaStore) syncQuotasToK8s(ctx context.Context) {
 		now := metav1.Now()
 		quotaCopy.Status.LastUpdateTime = &now
 
-		// Update conditions
+		// Update conditions using calculator
 		qs.updateQuotaConditions(quotaCopy, entry)
 
 		// Sync to Kubernetes
 		if err := qs.Status().Update(ctx, quotaCopy); err != nil {
 			log.Error(err, "Failed to update quota status", "namespace", namespace)
-			// Put back in dirty queue for retry
-			qs.markQuotaDirty(namespace)
+			// Keep in dirty queue for retry (already marked as dirty)
 		} else {
 			log.V(2).Info("Quota status synced to K8s", "namespace", namespace)
+			// Clear from dirty queue only on successful sync
+			qs.clearQuotaDirty(namespace)
 		}
 	}
-}
-
-// calculateAvailablePercent calculates available percentage for each resource
-func (qs *QuotaStore) calculateAvailablePercent(entry *QuotaStoreEntry) *tfv1.GPUResourceAvailablePercent {
-	percent := &tfv1.GPUResourceAvailablePercent{}
-
-	// Calculate requests.tflops percentage
-	if entry.quota.Spec.Total.RequestsTFlops != nil && entry.currentUsage.RequestsTFlops != nil {
-		total := entry.quota.Spec.Total.RequestsTFlops.Value()
-		used := entry.currentUsage.RequestsTFlops.Value()
-		if total > 0 {
-			available := (total - used) * 100 / total
-			if available < 0 {
-				available = 0
-			}
-			percent.RequestsTFlops = &available
-		}
-	}
-
-	// Calculate requests.vram percentage
-	if entry.quota.Spec.Total.RequestsVRAM != nil && entry.currentUsage.RequestsVRAM != nil {
-		total := entry.quota.Spec.Total.RequestsVRAM.Value()
-		used := entry.currentUsage.RequestsVRAM.Value()
-		if total > 0 {
-			available := (total - used) * 100 / total
-			if available < 0 {
-				available = 0
-			}
-			percent.RequestsVRAM = &available
-		}
-	}
-
-	// Calculate limits.tflops percentage
-	if entry.quota.Spec.Total.LimitsTFlops != nil && entry.currentUsage.LimitsTFlops != nil {
-		total := entry.quota.Spec.Total.LimitsTFlops.Value()
-		used := entry.currentUsage.LimitsTFlops.Value()
-		if total > 0 {
-			available := (total - used) * 100 / total
-			if available < 0 {
-				available = 0
-			}
-			percent.LimitsTFlops = &available
-		}
-	}
-
-	// Calculate limits.vram percentage
-	if entry.quota.Spec.Total.LimitsVRAM != nil && entry.currentUsage.LimitsVRAM != nil {
-		total := entry.quota.Spec.Total.LimitsVRAM.Value()
-		used := entry.currentUsage.LimitsVRAM.Value()
-		if total > 0 {
-			available := (total - used) * 100 / total
-			if available < 0 {
-				available = 0
-			}
-			percent.LimitsVRAM = &available
-		}
-	}
-
-	// Calculate workers percentage
-	if entry.quota.Spec.Total.Workers != nil && entry.currentUsage.Workers != nil {
-		total := int64(*entry.quota.Spec.Total.Workers)
-		used := int64(*entry.currentUsage.Workers)
-		if total > 0 {
-			available := (total - used) * 100 / total
-			if available < 0 {
-				available = 0
-			}
-			percent.Workers = &available
-		}
-	}
-
-	return percent
 }
 
 // updateQuotaConditions updates the quota conditions based on current usage
 func (qs *QuotaStore) updateQuotaConditions(quota *tfv1.GPUResourceQuota, entry *QuotaStoreEntry) {
-	now := metav1.Now()
-
-	// Check if quota is exceeded
-	exceeded := false
-	alertThresholdReached := false
-
-	// Check TFlops limits
-	if entry.quota.Spec.Total.RequestsTFlops != nil {
-		if entry.currentUsage.RequestsTFlops.Cmp(*entry.quota.Spec.Total.RequestsTFlops) > 0 {
-			exceeded = true
-		}
-		if entry.quota.Spec.Total.AlertThresholdPercent != nil {
-			threshold := *entry.quota.Spec.Total.AlertThresholdPercent
-			total := entry.quota.Spec.Total.RequestsTFlops.Value()
-			used := entry.currentUsage.RequestsTFlops.Value()
-			if total > 0 && used*100/total >= int64(threshold) {
-				alertThresholdReached = true
-			}
-		}
+	// Get default alert threshold
+	alertThreshold := int32(95)
+	if entry.quota.Spec.Total.AlertThresholdPercent != nil {
+		alertThreshold = *entry.quota.Spec.Total.AlertThresholdPercent
 	}
 
-	// Update conditions
-	conditions := []metav1.Condition{
-		{
-			Type:               "Ready",
-			Status:             metav1.ConditionTrue,
-			Reason:             "QuotaActive",
-			Message:            "Quota is active and monitoring resource usage",
-			LastTransitionTime: now,
-		},
-	}
+	// Use calculator to check conditions
+	exceeded := qs.calculator.IsQuotaExceeded(entry.quota, entry.currentUsage)
+	availablePercent := qs.calculator.CalculateAvailablePercent(entry.quota, entry.currentUsage)
+	alertReached := qs.calculator.IsAlertThresholdReached(availablePercent, alertThreshold)
 
-	if exceeded {
-		conditions = append(conditions, metav1.Condition{
-			Type:               "Exceeded",
-			Status:             metav1.ConditionTrue,
-			Reason:             "QuotaExceeded",
-			Message:            "One or more resource quotas have been exceeded",
-			LastTransitionTime: now,
-		})
-	} else {
-		conditions = append(conditions, metav1.Condition{
-			Type:               "Exceeded",
-			Status:             metav1.ConditionFalse,
-			Reason:             "QuotaWithinLimits",
-			Message:            "All resource quotas are within limits",
-			LastTransitionTime: now,
-		})
-	}
-
-	if alertThresholdReached {
-		conditions = append(conditions, metav1.Condition{
-			Type:               "AlertThresholdReached",
-			Status:             metav1.ConditionTrue,
-			Reason:             "ThresholdReached",
-			Message:            "Resource usage has reached the alert threshold",
-			LastTransitionTime: now,
-		})
-	} else {
-		conditions = append(conditions, metav1.Condition{
-			Type:               "AlertThresholdReached",
-			Status:             metav1.ConditionFalse,
-			Reason:             "BelowThreshold",
-			Message:            "Resource usage is below the alert threshold",
-			LastTransitionTime: now,
-		})
-	}
-
-	quota.Status.Conditions = conditions
+	// Use calculator to create standard conditions
+	quota.Status.Conditions = qs.calculator.CreateStandardConditions(exceeded, alertReached, alertThreshold)
 }
 
 // QuotaExceededError represents a quota exceeded error with detailed information
@@ -724,23 +527,4 @@ func (e *QuotaExceededError) Error() string {
 func IsQuotaError(err error) bool {
 	_, ok := err.(*QuotaExceededError)
 	return ok
-}
-
-// safeSub safely subtracts b from a, ensuring a doesn't go negative
-func (qs *QuotaStore) safeSub(a *resource.Quantity, b resource.Quantity) {
-	if a == nil {
-		return
-	}
-	a.Sub(b)
-	// Ensure quantity doesn't go negative
-	if a.Sign() < 0 {
-		a.Set(0)
-	}
-}
-
-// safeAdd safely adds quantities with nil checks
-func (qs *QuotaStore) safeAdd(a *resource.Quantity, b resource.Quantity) {
-	if a != nil {
-		a.Add(b)
-	}
 }
