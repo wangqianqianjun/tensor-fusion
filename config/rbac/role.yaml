@@ -129,37 +129,12 @@ rules:
   - update
   - watch
 - apiGroups:
-  - scheduling.x-k8s.io
-  resources:
-  - podgroups
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - scheduling.x-k8s.io
-  resources:
-  - podgroups/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - scheduling.x-k8s.io
-  resources:
-  - podgroups/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
   - tensor-fusion.ai
   resources:
   - gpunodeclasses
   - gpunodes
   - gpupools
+  - gpuresourcequotas
   - gpus
   - schedulingconfigtemplates
   - tensorfusionclusters
@@ -180,6 +155,7 @@ rules:
   - gpunodeclasses/finalizers
   - gpunodes/finalizers
   - gpupools/finalizers
+  - gpuresourcequotas/finalizers
   - gpus/finalizers
   - schedulingconfigtemplates/finalizers
   - tensorfusionclusters/finalizers
@@ -194,6 +170,7 @@ rules:
   - gpunodeclasses/status
   - gpunodes/status
   - gpupools/status
+  - gpuresourcequotas/status
   - gpus/status
   - schedulingconfigtemplates/status
   - tensorfusionclusters/status

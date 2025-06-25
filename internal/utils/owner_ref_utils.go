@@ -3,6 +3,7 @@ package utils
 import (
 	context "context"
 
+	"github.com/aws/smithy-go/ptr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,4 +35,20 @@ func FindRootOwnerReference(ctx context.Context, c client.Client, namespace stri
 			return &ownerRef, nil
 		}
 	}
+}
+
+// FindFirstLevelOwnerReference recursively finds the root owner reference for a given object (e.g. Pod).
+func FindFirstLevelOwnerReference(obj metav1.Object) *metav1.OwnerReference {
+	owners := obj.GetOwnerReferences()
+	if len(owners) == 0 {
+		return &metav1.OwnerReference{
+			APIVersion: "v1",
+			Kind:       "Pod",
+			Name:       obj.GetName(),
+			UID:        obj.GetUID(),
+			Controller: ptr.Bool(true),
+		}
+	}
+	ownerRef := owners[0]
+	return &ownerRef
 }
