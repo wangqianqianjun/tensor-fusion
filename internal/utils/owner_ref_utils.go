@@ -41,6 +41,9 @@ func FindRootOwnerReference(ctx context.Context, c client.Client, namespace stri
 func FindFirstLevelOwnerReference(obj metav1.Object) *metav1.OwnerReference {
 	owners := obj.GetOwnerReferences()
 	if len(owners) == 0 {
+		if obj.GetUID() == "" {
+			return nil
+		}
 		return &metav1.OwnerReference{
 			APIVersion: "v1",
 			Kind:       "Pod",
@@ -50,5 +53,8 @@ func FindFirstLevelOwnerReference(obj metav1.Object) *metav1.OwnerReference {
 		}
 	}
 	ownerRef := owners[0]
+	if ownerRef.UID == "" {
+		return nil
+	}
 	return &ownerRef
 }
