@@ -381,56 +381,16 @@ spec:
     consolidateAfter: 30s
 ```
 
-### 4. Advantages Analysis
+### 4. Monitoring and Operations
 
-#### 4.1 Technical Advantages
-- **Native compatibility** - Fully aligns with Karpenter's design philosophy
-- **Fast response** - Leverages Karpenter's second-level response capability
-- **Resource efficient** - Intelligent scheduling pods have minimal resource overhead
-- **Transparent state** - Clear tracking of the entire scaling process
-
-#### 4.2 Operational Advantages
-- **Monitoring friendly** - All state changes have clear events and metrics
-- **Failure handling** - Built-in timeout and retry mechanisms
-- **Resource cleanup** - Automatic cleanup of temporary resources, avoiding leaks
-- **Good scalability** - Easy support for multiple GPU types and specifications
-
-### 5. Implementation Plan
-
-#### Phase 1: Infrastructure (2 weeks)
-1. Implement basic intelligent scheduling controller framework
-2. Create smart pod manager
-3. Integrate with existing GPU allocator
-
-#### Phase 2: Monitoring System (2 weeks)
-1. Implement NodeClaim monitor
-2. Establish status event system
-3. Add monitoring metrics and logging
-
-#### Phase 3: Optimization and Cleanup (2 weeks)
-1. Implement intelligent cleanup logic
-2. Add retry and failure handling
-3. Performance optimization and resource management
-
-#### Phase 4: Testing and Validation (2 weeks)
-1. Unit tests and integration tests
-2. Real environment validation
-3. Documentation and examples
-
-### 6. Monitoring and Operations
-
-#### 6.1 Key Metrics
+#### 4.1 Key Metrics
 - `tensor_fusion_smart_pods_created_total`: Total number of intelligent scheduling pods created
 - `tensor_fusion_smart_pods_active`: Currently active intelligent scheduling pods
 - `tensor_fusion_nodeclaim_provision_duration`: NodeClaim provisioning time
 - `tensor_fusion_scaling_success_rate`: Scaling success rate
 
-#### 6.2 Alert Rules
+#### 4.2 Alert Rules
 - Intelligent scheduling pods pending for long time
 - High NodeClaim creation failure rate
 - Scaling response time too long
 - Resource cleanup failures
-
-## Summary
-
-This new design is completely based on Karpenter's native working mechanisms, triggering automatic scaling through intelligent pod scheduling, avoiding the complexity of directly manipulating NodeClaims. This solution is not only more technically reliable but also more operationally friendly, representing a truly cloud-native GPU resource auto-scaling solution.
