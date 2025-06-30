@@ -79,8 +79,6 @@ func (r *GPUNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				return false, err
 			}
 		}
-
-		// remove from metrics map
 		metrics.RemoveNodeMetrics(node.Name)
 
 		switch node.Spec.ManageMode {
@@ -211,6 +209,7 @@ func (r *GPUNodeReconciler) checkStatusAndUpdateVirtualCapacity(ctx context.Cont
 		}
 
 		// Update all GPU devices status to Pending
+		// TODO, should update in batch, making every GPU pending state led to unschedule for new workers
 		err = r.syncStatusToGPUDevices(ctx, node, tfv1.TensorFusionGPUPhasePending)
 		if err != nil {
 			return true, err
@@ -445,6 +444,22 @@ func (r *GPUNodeReconciler) createHypervisorPod(ctx context.Context, key client.
 		Name:  constants.GPUNodeNameEnv,
 		Value: node.Name,
 	})
+
+	// add auto freeze config for hypervisor
+	if pool.Spec.SchedulingConfigTemplate != nil {
+		schedulingConfigTemplate := &tfv1.SchedulingConfigTemplate{}
+		if err := r.Get(ctx, client.ObjectKey{Name: *pool.Spec.SchedulingConfigTemplate}, schedulingConfigTemplate); err == nil {
+			if schedulingConfigTemplate.Spec.Hypervisor != nil {
+				if cfg, err := json.Marshal(schedulingConfigTemplate.Spec.Hypervisor); err == nil {
+					spec.Containers[0].Env = append(spec.Containers[0].Env, corev1.EnvVar{
+						Name:  constants.HypervisorSchedulingConfigEnv,
+						Value: string(cfg),
+					})
+				}
+			}
+		}
+	}
+
 	spec.ServiceAccountName = constants.HypervisorServiceAccountName
 	newPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
