@@ -10,14 +10,13 @@ import (
 	"math/rand/v2"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	constants "github.com/NexusGPU/tensor-fusion/internal/constants"
-	"k8s.io/apimachinery/pkg/types"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -29,12 +28,15 @@ var ErrNextLoop = errors.New("stop this loop and return the associated Result ob
 // ErrTerminateLoop is not a real error. It forces the current reconciliation loop to stop
 var ErrTerminateLoop = errors.New("stop this loop and do not requeue")
 
-// Minimum time between reconciliations for the same object
-var debounceInterval = 3 * time.Second
+var IsTestMode = false
 
 func init() {
-	if os.Getenv("GO_TESTING") == "true" {
-		debounceInterval = 60 * time.Millisecond
+	// in unit testing mode, debounce should be very short
+	if (len(os.Args) > 1 && os.Args[1] == "-test.run") ||
+		os.Getenv("GO_TESTING") == "true" {
+		IsTestMode = true
+		constants.PendingRequeueDuration = time.Millisecond * 150
+		constants.StatusCheckInterval = time.Millisecond * 200
 	}
 }
 
@@ -136,47 +138,24 @@ func GetObjectHash(objs ...any) string {
 	hasher := fnv.New64a()
 
 	for _, obj := range objs {
-		jsonBytes, err := json.Marshal(obj)
-		if err != nil {
-			panic(err)
+		if objStr, ok := obj.(string); ok {
+			hasher.Write([]byte(objStr))
+		} else if objBytes, ok := obj.([]byte); ok {
+			hasher.Write(objBytes)
+		} else {
+			jsonBytes, err := json.Marshal(obj)
+			if err != nil {
+				hasher.Write([]byte(err.Error()))
+			}
+			hasher.Write(jsonBytes)
 		}
-		// Add length prefix to prevent collisions when combining multiple objects
-		hasher.Write(fmt.Appendf(nil, "%d:", len(jsonBytes)))
-		hasher.Write(jsonBytes)
 	}
-
 	return fmt.Sprintf("%x", hasher.Sum(nil))
 }
 
 func CompareAndGetObjectHash(hash string, obj ...any) (bool, string) {
 	newHash := GetObjectHash(obj...)
 	return hash != newHash, newHash
-}
-
-const DebounceKeySuffix = ":in_queue"
-
-func DebouncedReconcileCheck(ctx context.Context, lastProcessedItems *sync.Map, name types.NamespacedName) (runNow bool, alreadyQueued bool, waitTime time.Duration) {
-	now := time.Now()
-	key := name.String()
-	inQueueKey := key + DebounceKeySuffix
-
-	if val, exists := lastProcessedItems.Load(key); exists {
-		if lastProcessed, ok := val.(time.Time); ok {
-			elapsed := now.Sub(lastProcessed)
-			if elapsed < debounceInterval {
-				wait := debounceInterval - elapsed
-
-				if _, loaded := lastProcessedItems.LoadOrStore(inQueueKey, now); loaded {
-					return false, true, wait
-				}
-				return false, false, wait
-			}
-		}
-	}
-
-	lastProcessedItems.Delete(inQueueKey)
-	lastProcessedItems.Store(key, now)
-	return true, false, 0
 }
 
 func IsPodConditionTrue(conditions []corev1.PodCondition, conditionType corev1.PodConditionType) bool {
@@ -202,4 +181,19 @@ func ExtractPoolNameFromNodeLabel(node *tfv1.GPUNode) string {
 		}
 	}
 	return poolName
+}
+
+func EqualConditionsDisregardTransitionTime(a, b []metav1.Condition) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Type != b[i].Type ||
+			a[i].Status != b[i].Status ||
+			a[i].Reason != b[i].Reason ||
+			a[i].Message != b[i].Message {
+			return false
+		}
+	}
+	return true
 }

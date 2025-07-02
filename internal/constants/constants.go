@@ -5,6 +5,12 @@ import "time"
 const (
 	NvidiaGPUKey = "nvidia.com/gpu"
 )
+
+var (
+	PendingRequeueDuration = time.Second * 3
+	StatusCheckInterval    = time.Second * 6
+)
+
 const (
 	// Domain is the domain prefix used for all tensor-fusion.ai related annotations and finalizers
 	Domain = "tensor-fusion.ai"
@@ -13,12 +19,17 @@ const (
 	FinalizerSuffix = "finalizer"
 	Finalizer       = Domain + "/" + FinalizerSuffix
 
+	SchedulerName = "tensor-fusion-scheduler"
+
 	LabelKeyOwner           = Domain + "/managed-by"
 	LabelKeyClusterOwner    = Domain + "/cluster"
 	LabelKeyNodeClass       = Domain + "/node-class"
 	LabelKeyPodTemplateHash = Domain + "/pod-template-hash"
 	LabelComponent          = Domain + "/component"
-	TrueStringValue         = "true"
+	// used by TF connection, for matching the related connections when worker Pod state changed
+	LabelWorkerName  = Domain + "/worker-name"
+	TrueStringValue  = "true"
+	FalseStringValue = "false"
 
 	ComponentClient        = "client"
 	ComponentWorker        = "worker"
@@ -39,44 +50,47 @@ const (
 	GpuPoolKey                     = Domain + "/gpupool"
 
 	// Annotation key constants
-	GpuCountKey                    = Domain + "/gpu-count"
+	GpuCountAnnotation             = Domain + "/gpu-count"
 	TFLOPSRequestAnnotation        = Domain + "/tflops-request"
 	VRAMRequestAnnotation          = Domain + "/vram-request"
 	TFLOPSLimitAnnotation          = Domain + "/tflops-limit"
 	VRAMLimitAnnotation            = Domain + "/vram-limit"
-	WorkloadProfileAnnotation      = Domain + "/client-profile"
+	WorkloadProfileAnnotation      = Domain + "/workload-profile"
 	InjectContainerAnnotation      = Domain + "/inject-container"
-	ReplicasAnnotation             = Domain + "/replicas"
-	GenWorkloadAnnotation          = Domain + "/generate-workload"
 	IsLocalGPUAnnotation           = Domain + "/is-local-gpu"
+	EmbeddedWorkerAnnotation       = Domain + "/embedded-worker"
+	DedicatedWorkerAnnotation      = Domain + "/dedicated-worker"
 	StandaloneWorkerModeAnnotation = Domain + "/no-standalone-worker-mode"
+	// GPUModelAnnotation specifies the required GPU model (e.g., "A100", "H100")
+	GPUModelAnnotation = Domain + "/gpu-model"
+	// GPU ID list is assigned by scheduler, should not specified by user
+	GPUDeviceIDsAnnotation            = Domain + "/gpu-ids"
+	SetPendingOwnedWorkloadAnnotation = Domain + "/pending-owned-workload"
 
-	GenHostPortLabel        = Domain + "/host-port"
-	GenHostPortLabelValue   = "auto"
-	GenHostPortNameLabel    = Domain + "/port-name"
-	GenPortNumberAnnotation = Domain + "/port-number"
+	GenHostPortLabel             = Domain + "/host-port"
+	GenHostPortLabelValue        = "auto"
+	GenHostPortNameLabel         = Domain + "/port-name"
+	GenPortNumberAnnotation      = Domain + "/port-number"
+	TensorFusionWorkerPortNumber = 8000
 
 	AutoScaleLimitsAnnotation   = Domain + "/auto-limits"
 	AutoScaleRequestsAnnotation = Domain + "/auto-requests"
 	AutoScaleReplicasAnnotation = Domain + "/auto-replicas"
 
-	// GPUModelAnnotation specifies the required GPU model (e.g., "A100", "H100")
-	GPUModelAnnotation = Domain + "/gpu-model"
-
 	GpuReleasedAnnotation = Domain + "/gpu-released"
 
-	TensorFusionPodCounterKeyAnnotation   = Domain + "/pod-counter-key"
-	TensorFusionPodCountAnnotation        = Domain + "/tf-pod-count"
-	TensorFusionEnabledReplicasAnnotation = Domain + "/enabled-replicas"
+	TensorFusionPodCounterKeyAnnotation = Domain + "/pod-counter-key"
+	TensorFusionPodCountAnnotation      = Domain + "/tf-pod-count"
+	TensorFusionWorkerSuffix            = "-tf"
 
-	PendingRequeueDuration = time.Second * 3
-	StatusCheckInterval    = time.Second * 6
+	// For grey release
+	TensorFusionEnabledReplicasAnnotation = Domain + "/enabled-replicas"
+	TensorFusionDefaultPoolKeyAnnotation  = Domain + "/is-default-pool"
 
 	GetConnectionURLEnv    = "TENSOR_FUSION_OPERATOR_GET_CONNECTION_URL"
 	ConnectionNameEnv      = "TENSOR_FUSION_CONNECTION_NAME"
 	ConnectionNamespaceEnv = "TENSOR_FUSION_CONNECTION_NAMESPACE"
 
-	WorkerPortEnv              = "TENSOR_FUSION_WORKER_PORT"
 	WorkerCudaUpLimitTflopsEnv = "TENSOR_FUSION_CUDA_UP_LIMIT_TFLOPS"
 	WorkerCudaUpLimitEnv       = "TENSOR_FUSION_CUDA_UP_LIMIT"
 	WorkerCudaMemLimitEnv      = "TENSOR_FUSION_CUDA_MEM_LIMIT"
@@ -97,6 +111,10 @@ const (
 	QoSLevelMedium   = "medium"
 	QoSLevelHigh     = "high"
 	QoSLevelCritical = "critical"
+
+	EnableWebhookEnv                  = "ENABLE_WEBHOOKS"
+	EnableSchedulerEnv                = "ENABLE_SCHEDULER"
+	EnableCustomResourceControllerEnv = "ENABLE_CR_CONTROLLER"
 )
 
 const (
@@ -149,8 +167,39 @@ const TFDataPath = "/tmp/tensor-fusion/data"
 const DataVolumeName = "tf-data"
 const TensorFusionPoolManualCompaction = Domain + "/manual-compaction"
 const AlertJobName = "tensor-fusion"
+const HypervisorSchedulingConfigEnv = "TF_HYPERVISOR_SCHEDULING_CONFIG"
 
 const (
 	LeaderInfoConfigMapName        = "tensor-fusion-operator-leader-info"
 	LeaderInfoConfigMapLeaderIPKey = "leader-ip"
 )
+
+const ShortUUIDAlphabet = "123456789abcdefghijkmnopqrstuvwxy"
+const NvidiaVisibleAllDeviceEnv = "NVIDIA_VISIBLE_DEVICES"
+const NvidiaVisibleAllDeviceValue = "all"
+
+const (
+	LowFrequencyObjFailureInitialDelay        = 100 * time.Millisecond
+	LowFrequencyObjFailureMaxDelay            = 1000 * time.Second
+	LowFrequencyObjFailureMaxRPS              = 1
+	LowFrequencyObjFailureMaxBurst            = 1
+	LowFrequencyObjFailureConcurrentReconcile = 5
+)
+
+// For security enhancement, there are 2 types of endpoints to protect
+// 1. client call operator /connection API, to obtain tensor fusion worker's URL
+// 2. worker call hypervisor API, to obtain current workers GPU quota info
+// if this env var is set on operator and hypervisor, will try to verify JWT signature for each call
+// not implemented yet, iss is public in EKS and most K8S distribution
+// but k3s and some K8S distribution may not support, need to find some way to get SA token JWT pub key
+
+const HypervisorVerifyServiceAccountEnabledEnvVar = "SA_TOKEN_VERIFY_ENABLED"
+const HypervisorVerifyServiceAccountPublicKeyEnvVar = "SA_TOKEN_VERIFY_PUBLIC_KEY"
+
+// TensorFusion ControllerManager's http endpoint will verify Pod JWT signature
+// if this env var is set, will disable the verification, it's enabled by default
+// should not set to true in production environment
+const DisableConnectionAuthEnv = "DISABLE_CONNECTION_AUTH"
+
+const AuthorizationHeader = "Authorization"
+const ExtraVerificationInfoPodIDKey = "authentication.kubernetes.io/pod-uid"

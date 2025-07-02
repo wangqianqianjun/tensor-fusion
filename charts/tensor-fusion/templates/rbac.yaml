@@ -7,6 +7,7 @@ rules:
   - ""
   resources:
   - configmaps
+  - events
   - namespaces
   verbs:
   - create
@@ -15,21 +16,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
 - apiGroups:
   - ""
   resources:
@@ -43,13 +29,17 @@ rules:
   - patch
   - update
   - watch
-  - deletecollection
 - apiGroups:
   - ""
   resources:
   - nodes/finalizers
+  - pods/binding
+  - pods/exec
   - pods/finalizers
   verbs:
+  - create
+  - get
+  - patch
   - update
 - apiGroups:
   - ""
@@ -62,20 +52,21 @@ rules:
   - update
 - apiGroups:
   - ""
+  - policy
+  - storage.k8s.io
   resources:
-  - pods/exec
+  - '*'
   verbs:
-  - create
   - get
-  - patch
-  - update
+  - list
+  - watch
 - apiGroups:
   - apps
   resources:
   - daemonsets
   - deployments
-  - statefulsets
   - replicasets
+  - statefulsets
   verbs:
   - create
   - delete
@@ -109,25 +100,26 @@ rules:
   resources:
   - leases
   verbs:
+  - create
+  - delete
   - get
   - list
-  - watch
-  - create
-  - update
   - patch
-  - delete
+  - update
+  - watch
 - apiGroups:
   - tensor-fusion.ai
   resources:
-  - workloadprofiles
   - gpunodeclasses
   - gpunodes
   - gpupools
+  - gpuresourcequotas
   - gpus
   - schedulingconfigtemplates
   - tensorfusionclusters
   - tensorfusionconnections
   - tensorfusionworkloads
+  - workloadprofiles
   verbs:
   - create
   - delete
@@ -139,29 +131,31 @@ rules:
 - apiGroups:
   - tensor-fusion.ai
   resources:
-  - workloadprofiles/finalizers
   - gpunodeclasses/finalizers
   - gpunodes/finalizers
   - gpupools/finalizers
+  - gpuresourcequotas/finalizers
   - gpus/finalizers
   - schedulingconfigtemplates/finalizers
   - tensorfusionclusters/finalizers
   - tensorfusionconnections/finalizers
   - tensorfusionworkloads/finalizers
+  - workloadprofiles/finalizers
   verbs:
   - update
 - apiGroups:
   - tensor-fusion.ai
   resources:
-  - workloadprofiles/status
   - gpunodeclasses/status
   - gpunodes/status
   - gpupools/status
+  - gpuresourcequotas/status
   - gpus/status
   - schedulingconfigtemplates/status
   - tensorfusionclusters/status
   - tensorfusionconnections/status
   - tensorfusionworkloads/status
+  - workloadprofiles/status
   verbs:
   - get
   - patch

@@ -22,16 +22,20 @@ import (
 	"strconv"
 	"sync"
 
+	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	controllerutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider"
@@ -58,27 +62,16 @@ type TensorFusionClusterReconciler struct {
 // +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=tensor-fusion.ai,resources=tensorfusionclusters/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch;update;list;watch;get
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=namespaces;configmaps,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=core,resources=namespaces;configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=apps,resources=daemonsets;statefulsets;replicasets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile a TensorFusionCluster object, create and monitor GPU Pool, managing cluster level component versions
 func (r *TensorFusionClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
-
-	runNow, _, waitTime := utils.DebouncedReconcileCheck(ctx, &r.LastProcessedItems, req.NamespacedName)
-	// If delete event happen during wait time and no other event trigger reconciliation, it will not be deleted
-	// if alreadyQueued {
-	// 	return ctrl.Result{}, nil
-	// }
-	if !runNow {
-		return ctrl.Result{RequeueAfter: waitTime}, nil
-	}
-
 	log.Info("Reconciling TensorFusionCluster", "name", req.Name)
 	defer func() {
 		log.Info("Finished reconciling TensorFusionCluster", "name", req.Name)
@@ -204,7 +197,7 @@ func (r *TensorFusionClusterReconciler) listOwnedGPUPools(ctx context.Context, t
 	return gpupoolsList.Items, nil
 }
 
-func (r *TensorFusionClusterReconciler) reconcileTimeSeriesDatabase(ctx context.Context, tfc *tfv1.TensorFusionCluster) (bool, error) {
+func (r *TensorFusionClusterReconciler) reconcileTimeSeriesDatabase(_ context.Context, _ *tfv1.TensorFusionCluster) (bool, error) {
 	// TODO: Not implemented yet
 	return false, nil
 }
@@ -295,6 +288,9 @@ func (r *TensorFusionClusterReconciler) reconcileGPUPool(ctx context.Context, tf
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   key,
 					Labels: poolLabels,
+					Annotations: map[string]string{
+						constants.TensorFusionDefaultPoolKeyAnnotation: strconv.FormatBool(poolSpec.IsDefault),
+					},
 				},
 				Spec: poolSpec.SpecTemplate,
 			}
@@ -312,8 +308,16 @@ func (r *TensorFusionClusterReconciler) reconcileGPUPool(ctx context.Context, tf
 			}
 		} else {
 			// Update existing GPUPool if spec changed
-			if !equality.Semantic.DeepEqual(&existingPool.Spec, &poolSpec.SpecTemplate) {
+			specChanged := !equality.Semantic.DeepEqual(&existingPool.Spec, &poolSpec.SpecTemplate)
+			defaultPoolChanged := existingPool.Annotations == nil ||
+				existingPool.Annotations[constants.TensorFusionDefaultPoolKeyAnnotation] != strconv.FormatBool(poolSpec.IsDefault)
+
+			if specChanged || defaultPoolChanged {
 				existingPool.Spec = poolSpec.SpecTemplate
+				if existingPool.Annotations == nil {
+					existingPool.Annotations = make(map[string]string)
+				}
+				existingPool.Annotations[constants.TensorFusionDefaultPoolKeyAnnotation] = strconv.FormatBool(poolSpec.IsDefault)
 				err = r.Update(ctx, existingPool)
 				if err != nil {
 					errors = append(errors, fmt.Errorf("failed to update GPUPool %s: %w", key, err))
@@ -412,6 +416,20 @@ func (r *TensorFusionClusterReconciler) updateTFClusterStatus(ctx context.Contex
 // SetupWithManager sets up the controller with the Manager.
 func (r *TensorFusionClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(controller.Options{
+			RateLimiter: workqueue.NewTypedMaxOfRateLimiter(
+				workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](
+					constants.LowFrequencyObjFailureInitialDelay,
+					constants.LowFrequencyObjFailureMaxDelay,
+				),
+				&workqueue.TypedBucketRateLimiter[reconcile.Request]{
+					Limiter: rate.NewLimiter(rate.Limit(
+						constants.LowFrequencyObjFailureMaxRPS),
+						constants.LowFrequencyObjFailureMaxBurst),
+				},
+			),
+			MaxConcurrentReconciles: constants.LowFrequencyObjFailureConcurrentReconcile,
+		}).
 		For(&tfv1.TensorFusionCluster{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("tensorfusioncluster").
 		Owns(&tfv1.GPUPool{}).

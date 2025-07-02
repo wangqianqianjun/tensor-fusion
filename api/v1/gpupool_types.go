@@ -34,9 +34,6 @@ type GPUPoolSpec struct {
 	NodeManagerConfig *NodeManagerConfig `json:"nodeManagerConfig,omitempty"`
 
 	// +optional
-	ObservabilityConfig *ObservabilityConfig `json:"observabilityConfig,omitempty"`
-
-	// +optional
 	QosConfig *QosConfig `json:"qosConfig,omitempty"`
 
 	// +optional
@@ -100,21 +97,20 @@ type NodeManagerConfig struct {
 	NodePoolRollingUpdatePolicy *NodeRollingUpdatePolicy `json:"nodePoolRollingUpdatePolicy,omitempty"`
 }
 
-// +kubebuilder:validation:Enum=Provisioned;AutoSelect
+// +kubebuilder:validation:Enum=Provisioned;AutoSelect;Karpenter
 type ProvisioningMode string
 
 const (
 	ProvisioningModeProvisioned ProvisioningMode = "Provisioned"
-	ProvisioningModeAutoSelect  ProvisioningMode = "AutoSelect"
+
+	ProvisioningModeAutoSelect ProvisioningMode = "AutoSelect"
+
+	ProvisioningModeKarpenter ProvisioningMode = "Karpenter"
 )
 
 // NodeProvisioner or NodeSelector, they are exclusive.
 // NodeSelector is for existing GPUs, NodeProvisioner is for Karpenter-like auto management.
 type NodeProvisioner struct {
-	// Mode could be Karpenter or Native, for Karpenter mode, node provisioner will start dummy nodes to provision and warmup GPU nodes, do nothing for CPU nodes, for Native mode, provisioner will create or compact GPU & CPU nodes based on current pods
-	// +kubebuilder:default=Native
-	Mode NodeProvisionerMode `json:"mode,omitempty"`
-
 	NodeClass string `json:"nodeClass,omitempty"`
 
 	// +optional
@@ -157,14 +153,6 @@ type BudgetExceedStrategy string
 const (
 	BudgetExceedStrategyAlertOnly           BudgetExceedStrategy = "AlertOnly"
 	BudgetExceedStrategyAlertAndTerminateVM BudgetExceedStrategy = "AlertAndTerminateVM"
-)
-
-// +kubebuilder:validation:Enum=Native;Karpenter
-type NodeProvisionerMode string
-
-const (
-	NodeProvisionerModeNative    NodeProvisionerMode = "Native"
-	NodeProvisionerModeKarpenter NodeProvisionerMode = "Karpenter"
 )
 
 type Requirement struct {
@@ -235,23 +223,6 @@ type NodeRollingUpdatePolicy struct {
 type MaintenanceWindow struct {
 	// crontab syntax.
 	Includes []string `json:"includes,omitempty"`
-}
-
-type ObservabilityConfig struct {
-	// +optional
-	Monitor *MonitorConfig `json:"monitor,omitempty"`
-
-	// +optional
-	Alert *AlertConfig `json:"alert,omitempty"`
-}
-
-type MonitorConfig struct {
-	Interval string `json:"interval,omitempty"`
-}
-
-type AlertConfig struct {
-	// +optional
-	Expression *runtime.RawExtension `json:"expression,omitempty"`
 }
 
 // Define different QoS and their price.
@@ -347,6 +318,12 @@ type ClientConfig struct {
 
 	// +optional
 	PatchToContainer *runtime.RawExtension `json:"patchToContainer,omitempty"`
+
+	// +optional
+	PatchToEmbeddedWorkerContainer *runtime.RawExtension `json:"patchToEmbeddedWorkerContainer,omitempty"`
+
+	// +optional
+	PatchEmbeddedWorkerToPod *runtime.RawExtension `json:"patchEmbeddedWorkerToPod,omitempty"`
 }
 
 // GPUPoolStatus defines the observed state of GPUPool.

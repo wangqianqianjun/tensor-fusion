@@ -80,7 +80,6 @@ func (c *Client) GetResourcesInfo(r client.Client, ctx context.Context, pool *tf
 		if !pod.DeletionTimestamp.IsZero() {
 			return 0, 0, true, nil
 		}
-
 		if pod.Labels[constants.LabelKeyPodTemplateHash] != configHash {
 			c.podsToUpdate = append(c.podsToUpdate, &pod)
 		}

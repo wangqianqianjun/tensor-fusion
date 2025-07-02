@@ -10,13 +10,14 @@
             "request": "launch",
             "mode": "auto",
             "env": {
-                "ENABLE_WEBHOOKS": "false"
+                "ENABLE_WEBHOOKS": "false",
             },
             "program": "${workspaceFolder}/cmd/main.go",
             "args": [
                 "--gpu-info-config", "${workspaceFolder}/config/samples/gpu-info-config.yaml",
-                "--alert-rule-config", "${workspaceFolder}/config/samples/dynamic-config.yaml",
-                "--enable-alert", "true"
+                "--dynamic-config", "${workspaceFolder}/config/samples/dynamic-config.yaml",
+                "--scheduler-config", "${workspaceFolder}/config/samples/scheduler-config.yaml",
+                // "--enable-alert"
             ]
         },
         {
@@ -38,20 +39,36 @@
             "console": "integratedTerminal",
             "env": {
                 "KUBECONFIG": "~/.kube/config-tf-dev",
-                "ENABLE_WEBHOOKS": "false"
+                "ENABLE_WEBHOOKS": "false",
+                "ENABLE_SCHEDULER": "false"
             },
+            "args": [
+                "--gpu-info-config", "${workspaceFolder}/config/samples/gpu-info-config.yaml",
+                "--dynamic-config", "${workspaceFolder}/config/samples/dynamic-config.yaml",
+                "--scheduler-config", "${workspaceFolder}/config/samples/scheduler-config.yaml",
+                "--enable-alert",
+                "--enable-auto-scale"
+            ],
             "program": "${workspaceFolder}/cmd/main.go",
         },
         {
-            "name": "Debug Demo Env Operator",
+            "name": "Debug Local Env Operator",
             "type": "go",
             "request": "launch",
             "mode": "auto",
             "console": "integratedTerminal",
             "env": {
-                "KUBECONFIG": "~/.kube/dev_us-east-1_demo",
-                "ENABLE_WEBHOOKS": "false"
+                "KUBECONFIG": "~/.kube/config-local-studio",
+                "ENABLE_WEBHOOKS": "false",
+                "ENABLE_SCHEDULER": "false"
             },
+            "args": [
+                "--gpu-info-config", "${workspaceFolder}/config/samples/gpu-info-config.yaml",
+                "--dynamic-config", "${workspaceFolder}/config/samples/dynamic-config.yaml",
+                "--scheduler-config", "${workspaceFolder}/config/samples/scheduler-config.yaml",
+                "--enable-alert",
+                "--enable-auto-scale"
+            ],
             "program": "${workspaceFolder}/cmd/main.go",
         },
         {
@@ -60,6 +77,7 @@
             "request": "launch",
             "mode": "test",
             "env": {
+                "DEBUG_MODE": "true",
                 "GO_TESTING": "true"
             },
             "program": "${workspaceFolder}/internal/controller",

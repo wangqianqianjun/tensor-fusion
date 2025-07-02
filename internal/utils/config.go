@@ -2,16 +2,55 @@ package utils
 
 import (
 	context "context"
+	"encoding/base64"
+	"encoding/json"
 	"os"
+	"strings"
 	"time"
 
+	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
+	constants "github.com/NexusGPU/tensor-fusion/internal/constants"
+	"github.com/lithammer/shortuuid/v4"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/yaml"
 )
 
 const (
 	WatchConfigFileChangesInterval = 15 * time.Second
+
+	ServiceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 )
+
+var selfServiceAccountName string
+
+func InitServiceAccountConfig() {
+	data, err := os.ReadFile(ServiceAccountTokenPath)
+	if err != nil {
+		ctrl.Log.Info("service account token not found, run outside of Kubernetes cluster")
+		return
+	}
+	tokenParts := strings.Split(string(data), ".")
+	if len(tokenParts) != 3 {
+		ctrl.Log.Error(err, "failed to parse service account token")
+		return
+	}
+	// resolve JWT token to get service account name
+	decodedToken, err := base64.RawURLEncoding.DecodeString(tokenParts[1])
+	if err != nil {
+		ctrl.Log.Error(err, "failed to decode service account token")
+		return
+	}
+	var jwt map[string]any
+	if err := json.Unmarshal(decodedToken, &jwt); err != nil {
+		ctrl.Log.Error(err, "failed to parse service account token")
+		return
+	}
+	selfServiceAccountName = jwt["sub"].(string)
+	ctrl.Log.Info("in-cluster mode detected, service account resolved", "name", selfServiceAccountName)
+}
 
 func LoadConfigFromFile[T any](filename string, target *T) error {
 	data, err := os.ReadFile(filename)
@@ -71,7 +110,7 @@ func checkFileUpdated(filename string, lastModTime time.Time, ch chan []byte) ti
 		}
 
 		ch <- data
-		ctrl.Log.Info("config file reloaded", "filename", filename)
+		ctrl.Log.Info("config file loaded/reloaded", "filename", filename)
 		return currentModTime
 	}
 	return lastModTime
@@ -82,4 +121,45 @@ func GetEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func GetGPUResource(pod *corev1.Pod, isRequest bool) (tfv1.Resource, error) {
+	tflopsKey := constants.TFLOPSRequestAnnotation
+	vramKey := constants.VRAMRequestAnnotation
+	if !isRequest {
+		tflopsKey = constants.TFLOPSLimitAnnotation
+		vramKey = constants.VRAMLimitAnnotation
+	}
+	tflops, err := resource.ParseQuantity(pod.Annotations[tflopsKey])
+	if err != nil {
+		return tfv1.Resource{}, err
+	}
+	vram, err := resource.ParseQuantity(pod.Annotations[vramKey])
+	if err != nil {
+		return tfv1.Resource{}, err
+	}
+	return tfv1.Resource{
+		Tflops: tflops,
+		Vram:   vram,
+	}, nil
+}
+
+func NewShortID(length int) string {
+	id := shortuuid.NewWithAlphabet(constants.ShortUUIDAlphabet)
+	if length >= len(id) {
+		return id
+	}
+	return id[:length]
+}
+
+func ReadServiceAccountToken() string {
+	data, err := os.ReadFile(ServiceAccountTokenPath)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func GetSelfServiceAccountName() string {
+	return selfServiceAccountName
 }

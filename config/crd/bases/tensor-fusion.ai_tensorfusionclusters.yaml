@@ -122,50 +122,13 @@ spec:
                     - mock
                     type: string
                 type: object
-              dataPipelines:
-                description: DataPipelinesConfig defines the aggregation jobs that
-                  can make statistics on the data and then report to cloud if configured.
-                properties:
-                  resources:
-                    properties:
-                      syncPeriod:
-                        type: string
-                      syncToCloud:
-                        type: boolean
-                    type: object
-                  timeseries:
-                    properties:
-                      aggregationDataRetention:
-                        type: string
-                      aggregationPeriods:
-                        items:
-                          type: string
-                        type: array
-                      rawDataRetention:
-                        type: string
-                      remoteWrite:
-                        description: RemoteWriteConfig represents the configuration
-                          for remote write.
-                        properties:
-                          connection:
-                            properties:
-                              type:
-                                type: string
-                              url:
-                                type: string
-                            type: object
-                          metrics:
-                            items:
-                              type: string
-                            type: array
-                        type: object
-                    type: object
-                type: object
               gpuPools:
                 items:
                   description: GPUPool defines how to create a GPU pool, could be
                     URL or inline
                   properties:
+                    isDefault:
+                      type: boolean
                     name:
                       type: string
                     specTemplate:
@@ -295,7 +258,13 @@ spec:
                               properties:
                                 operatorEndpoint:
                                   type: string
+                                patchEmbeddedWorkerToPod:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
                                 patchToContainer:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                patchToEmbeddedWorkerContainer:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
                                 patchToPod:
@@ -489,18 +458,6 @@ spec:
                                         type: string
                                     type: object
                                   type: array
-                                mode:
-                                  default: Native
-                                  description: Mode could be Karpenter or Native,
-                                    for Karpenter mode, node provisioner will start
-                                    dummy nodes to provision and warmup GPU nodes,
-                                    do nothing for CPU nodes, for Native mode, provisioner
-                                    will create or compact GPU & CPU nodes based on
-                                    current pods
-                                  enum:
-                                  - Native
-                                  - Karpenter
-                                  type: string
                                 nodeClass:
                                   type: string
                               type: object
@@ -600,21 +557,8 @@ spec:
                               enum:
                               - Provisioned
                               - AutoSelect
+                              - Karpenter
                               type: string
-                          type: object
-                        observabilityConfig:
-                          properties:
-                            alert:
-                              properties:
-                                expression:
-                                  type: object
-                                  x-kubernetes-preserve-unknown-fields: true
-                              type: object
-                            monitor:
-                              properties:
-                                interval:
-                                  type: string
-                              type: object
                           type: object
                         qosConfig:
                           description: Define different QoS and their price.
@@ -682,27 +626,6 @@ spec:
                   - specTemplate
                   type: object
                 type: array
-              storageVendor:
-                description: StorageVendorConfig defines Postgres database with extensions
-                  for timeseries storage and other resource aggregation results, system
-                  events and diagnostics reports etc.
-                properties:
-                  image:
-                    type: string
-                  installCloudNativePGOperator:
-                    type: boolean
-                  mode:
-                    type: string
-                  pgClusterTemplate:
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  pgExtensions:
-                    items:
-                      type: string
-                    type: array
-                  storageClass:
-                    type: string
-                type: object
             type: object
           status:
             description: TensorFusionClusterStatus defines the observed state of TensorFusionCluster.
