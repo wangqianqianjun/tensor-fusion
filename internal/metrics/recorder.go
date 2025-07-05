@@ -2,12 +2,14 @@ package metrics
 
 import (
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
+	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
-	metricsProto "github.com/influxdata/line-protocol/v2/lineprotocol"
+	"github.com/NexusGPU/tensor-fusion/internal/utils"
 	"gopkg.in/natefinch/lumberjack.v2"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,6 +34,8 @@ type MetricsRecorder struct {
 
 	// Worker level unit price map, key is pool name, second level key is QoS level
 	WorkerUnitPriceMap map[string]map[string]RawBillingPricing
+
+	GlobalConfig *config.GlobalConfig
 }
 
 type ActiveNodeAndWorker struct {
@@ -56,37 +60,47 @@ func RemoveNodeMetrics(nodeName string) {
 	delete(nodeMetricsMap, nodeName)
 }
 
-func SetWorkerMetricsByWorkload(pod *corev1.Pod, workload *tfv1.TensorFusionWorkload, now time.Time) {
+func SetWorkerMetricsByWorkload(pod *corev1.Pod) {
 	workerMetricsLock.Lock()
 	defer workerMetricsLock.Unlock()
+
+	gpuRequestResource, err := utils.GetGPUResource(pod, true)
+	if err != nil {
+		return
+	}
+	gpuLimitResource, err := utils.GetGPUResource(pod, false)
+	if err != nil {
+		return
+	}
+	count, _ := strconv.ParseUint(pod.Annotations[constants.GpuCountAnnotation], 10, 32)
 
 	// Initialize metrics
 	if _, ok := workerMetricsMap[pod.Name]; !ok {
 		workerMetricsMap[pod.Name] = &WorkerResourceMetrics{
 			WorkerName:     pod.Name,
-			WorkloadName:   workload.Name,
-			PoolName:       workload.Spec.PoolName,
+			WorkloadName:   pod.Annotations[constants.WorkloadKey],
+			PoolName:       pod.Annotations[constants.GpuPoolKey],
 			Namespace:      pod.Namespace,
-			QoS:            string(workload.Spec.Qos),
+			QoS:            pod.Annotations[constants.QoSLevelAnnotation],
+			podLabels:      pod.Labels,
 			RawCost:        0,
-			LastRecordTime: now,
+			LastRecordTime: time.Now(),
 		}
 	}
 
 	// Update metrics fields that are mutable
 	metricsItem := workerMetricsMap[pod.Name]
-	metricsItem.TflopsRequest = workload.Spec.Resources.Requests.Tflops.AsApproximateFloat64()
-	metricsItem.TflopsLimit = workload.Spec.Resources.Limits.Tflops.AsApproximateFloat64()
-	metricsItem.VramBytesRequest = workload.Spec.Resources.Requests.Vram.AsApproximateFloat64()
-	metricsItem.VramBytesLimit = workload.Spec.Resources.Limits.Vram.AsApproximateFloat64()
-	if workload.Spec.GPUCount <= 0 {
+	metricsItem.TflopsRequest = gpuRequestResource.Tflops.AsApproximateFloat64()
+	metricsItem.TflopsLimit = gpuLimitResource.Tflops.AsApproximateFloat64()
+	metricsItem.VramBytesRequest = gpuRequestResource.Vram.AsApproximateFloat64()
+	metricsItem.VramBytesLimit = gpuLimitResource.Vram.AsApproximateFloat64()
+	if count <= 0 {
 		// handle invalid data if exists
 		metricsItem.GPUCount = 1
 	} else {
-		metricsItem.GPUCount = int(workload.Spec.GPUCount)
+		metricsItem.GPUCount = int(count)
 	}
-	metricsItem.WorkloadName = workload.Name
-
+	metricsItem.WorkloadName = pod.Annotations[constants.WorkloadKey]
 }
 
 func SetNodeMetrics(node *tfv1.GPUNode, poolObj *tfv1.GPUPool, gpuModels []string) {
@@ -215,10 +229,7 @@ func (mr *MetricsRecorder) RecordMetrics(writer io.Writer) {
 	}
 
 	now := time.Now()
-
-	var enc metricsProto.Encoder
-	enc.SetPrecision(metricsProto.Millisecond)
-
+	enc := NewEncoder(mr.GlobalConfig.MetricsFormat)
 	workerMetricsLock.RLock()
 
 	activeWorkerCnt := 0
@@ -250,21 +261,27 @@ func (mr *MetricsRecorder) RecordMetrics(writer io.Writer) {
 
 		enc.StartLine("tf_worker_resources")
 		enc.AddTag("namespace", metrics.Namespace)
-		enc.AddTag("pool_name", metrics.PoolName)
+		enc.AddTag("pool", metrics.PoolName)
 
 		if metrics.QoS == "" {
 			metrics.QoS = constants.QoSLevelMedium
 		}
 		enc.AddTag("qos", metrics.QoS)
-		enc.AddTag("worker_name", metrics.WorkerName)
-		enc.AddTag("workload_name", metrics.WorkloadName)
+		enc.AddTag("worker", metrics.WorkerName)
+		enc.AddTag("workload", metrics.WorkloadName)
 
-		enc.AddField("gpu_count", metricsProto.MustNewValue(int64(metrics.GPUCount)))
-		enc.AddField("tflops_limit", metricsProto.MustNewValue(metrics.TflopsLimit))
-		enc.AddField("tflops_request", metricsProto.MustNewValue(metrics.TflopsRequest))
-		enc.AddField("raw_cost", metricsProto.MustNewValue(metrics.RawCost))
-		enc.AddField("vram_bytes_limit", metricsProto.MustNewValue(metrics.VramBytesLimit))
-		enc.AddField("vram_bytes_request", metricsProto.MustNewValue(metrics.VramBytesRequest))
+		if mr.GlobalConfig.MetricsExtraPodLabels != nil {
+			for _, label := range mr.GlobalConfig.MetricsExtraPodLabels {
+				enc.AddTag(label, metrics.podLabels[label])
+			}
+		}
+
+		enc.AddField("gpu_count", int64(metrics.GPUCount))
+		enc.AddField("tflops_limit", metrics.TflopsLimit)
+		enc.AddField("tflops_request", metrics.TflopsRequest)
+		enc.AddField("raw_cost", metrics.RawCost)
+		enc.AddField("vram_bytes_limit", metrics.VramBytesLimit)
+		enc.AddField("vram_bytes_request", metrics.VramBytesRequest)
 
 		enc.EndLine(now)
 	}
@@ -286,30 +303,30 @@ func (mr *MetricsRecorder) RecordMetrics(writer io.Writer) {
 
 		enc.StartLine("tf_node_metrics")
 
-		enc.AddTag("node_name", metrics.NodeName)
-		enc.AddTag("pool_name", metrics.PoolName)
+		enc.AddTag("node", metrics.NodeName)
+		enc.AddTag("pool", metrics.PoolName)
 
-		enc.AddField("allocated_tflops", metricsProto.MustNewValue(metrics.AllocatedTflops))
-		enc.AddField("allocated_tflops_percent", metricsProto.MustNewValue(metrics.AllocatedTflopsPercent))
-		enc.AddField("allocated_tflops_percent_virtual", metricsProto.MustNewValue(metrics.AllocatedTflopsPercentToVirtualCap))
-		enc.AddField("allocated_vram_bytes", metricsProto.MustNewValue(metrics.AllocatedVramBytes))
-		enc.AddField("allocated_vram_percent", metricsProto.MustNewValue(metrics.AllocatedVramPercent))
-		enc.AddField("allocated_vram_percent_virtual", metricsProto.MustNewValue(metrics.AllocatedVramPercentToVirtualCap))
-		enc.AddField("gpu_count", metricsProto.MustNewValue(int64(metrics.GPUCount)))
-		enc.AddField("raw_cost", metricsProto.MustNewValue(metrics.RawCost))
+		enc.AddField("allocated_tflops", metrics.AllocatedTflops)
+		enc.AddField("allocated_tflops_percent", metrics.AllocatedTflopsPercent)
+		enc.AddField("allocated_tflops_percent_virtual", metrics.AllocatedTflopsPercentToVirtualCap)
+		enc.AddField("allocated_vram_bytes", metrics.AllocatedVramBytes)
+		enc.AddField("allocated_vram_percent", metrics.AllocatedVramPercent)
+		enc.AddField("allocated_vram_percent_virtual", metrics.AllocatedVramPercentToVirtualCap)
+		enc.AddField("gpu_count", int64(metrics.GPUCount))
+		enc.AddField("raw_cost", metrics.RawCost)
 		enc.EndLine(now)
 	}
 
-	enc.StartLine("tf_system_metrics")
 	for poolName, activeNodeAndWorker := range activeWorkerAndNodeByPool {
+		enc.StartLine("tf_system_metrics")
 		successCount, failCount, scaleUpCount, scaleDownCount := getSchedulerMetricsByPool(poolName)
-		enc.AddTag("pool_name", poolName)
-		enc.AddField("total_workers_cnt", metricsProto.MustNewValue(int64(activeNodeAndWorker.workerCnt)))
-		enc.AddField("total_nodes_cnt", metricsProto.MustNewValue(int64(activeNodeAndWorker.nodeCnt)))
-		enc.AddField("total_allocation_fail_cnt", metricsProto.MustNewValue(failCount))
-		enc.AddField("total_allocation_success_cnt", metricsProto.MustNewValue(successCount))
-		enc.AddField("total_scale_up_cnt", metricsProto.MustNewValue(scaleUpCount))
-		enc.AddField("total_scale_down_cnt", metricsProto.MustNewValue(scaleDownCount))
+		enc.AddTag("pool", poolName)
+		enc.AddField("total_workers_cnt", int64(activeNodeAndWorker.workerCnt))
+		enc.AddField("total_nodes_cnt", int64(activeNodeAndWorker.nodeCnt))
+		enc.AddField("total_allocation_fail_cnt", failCount)
+		enc.AddField("total_allocation_success_cnt", successCount)
+		enc.AddField("total_scale_up_cnt", scaleUpCount)
+		enc.AddField("total_scale_down_cnt", scaleDownCount)
 		enc.EndLine(now)
 	}
 
