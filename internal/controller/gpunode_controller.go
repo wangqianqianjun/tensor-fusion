@@ -101,7 +101,7 @@ func (r *GPUNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				return false, fmt.Errorf("failed to get computing vendor config for cluster %s", clusterName)
 			}
 
-			provider, err := cloudprovider.GetProvider(*vendorCfg, r.Client)
+			provider, err := cloudprovider.GetProvider(*vendorCfg, r.Client, nil)
 			if err != nil {
 				return false, err
 			}

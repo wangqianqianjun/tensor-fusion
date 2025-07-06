@@ -13,7 +13,7 @@ import (
 	mock "github.com/NexusGPU/tensor-fusion/internal/cloudprovider/mock"
 )
 
-func GetProvider(config tfv1.ComputingVendorConfig, client client.Client) (*types.GPUNodeProvider, error) {
+func GetProvider(config tfv1.ComputingVendorConfig, client client.Client, nodeManagerConfig *tfv1.NodeManagerConfig) (*types.GPUNodeProvider, error) {
 	var err error
 	var provider types.GPUNodeProvider
 	switch config.Type {
@@ -22,7 +22,7 @@ func GetProvider(config tfv1.ComputingVendorConfig, client client.Client) (*type
 	case "alibaba":
 		provider, err = alibaba.NewAlibabaGPUNodeProvider(config)
 	case "karpenter":
-		provider, err = karpenter.NewKarpenterGPUNodeProvider(config, client)
+		provider, err = karpenter.NewKarpenterGPUNodeProvider(config, client, *nodeManagerConfig)
 	case "mock":
 		provider, err = mock.NewMockGPUNodeProvider(config)
 	default:
