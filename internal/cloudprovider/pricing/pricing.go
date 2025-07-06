@@ -29,7 +29,6 @@ import (
 
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/types"
 	"sigs.k8s.io/yaml"
@@ -88,6 +87,27 @@ var (
 	}
 )
 
+// Global data initialized at package load time
+var (
+	globalAWSGPUInstanceData   map[string]GPUNodeInstanceInfoAndPrice
+	globalAzureGPUInstanceData map[string]GPUNodeInstanceInfoAndPrice
+	globalGPUModelToFP16TFlops map[string]int32
+)
+
+// init initializes the global GPU data when the package is loaded
+func init() {
+	globalAWSGPUInstanceData = make(map[string]GPUNodeInstanceInfoAndPrice)
+	globalAzureGPUInstanceData = make(map[string]GPUNodeInstanceInfoAndPrice)
+	globalGPUModelToFP16TFlops = make(map[string]int32)
+
+	// Load GPU model to FP16TFlops mapping from YAML
+	loadGPUInfoFromYAML()
+
+	// Load AWS and Azure instance data from CSV files
+	loadCSVInstanceData("internal/cloudprovider/pricing/aws_ec2.csv", providerAWS)
+	loadCSVInstanceData("internal/cloudprovider/pricing/az.csv", providerAzure)
+}
+
 // PricingProvider provides pricing information and calculations for instance types
 type PricingProvider interface {
 	GetPringcing(instanceType, capacityType types.CapacityTypeEnum) (float64, bool)
@@ -102,14 +122,8 @@ type GPUNodeInstanceInfoAndPrice struct {
 }
 
 // StaticPricingProvider implements PricingProvider using static pricing data
-type StaticPricingProvider struct {
-	mu sync.RWMutex
-
-	// Store pricing and instance info data
-	awsGPUInstanceData   map[string]GPUNodeInstanceInfoAndPrice
-	azureGPUInstanceData map[string]GPUNodeInstanceInfoAndPrice
-	gpuModelToFP16TFlops map[string]int32
-}
+// Data is now stored in global variables and initialized during package init
+type StaticPricingProvider struct{}
 
 // GPUInfo represents the structure of GPU info from YAML
 type GPUInfo struct {
@@ -120,35 +134,8 @@ type GPUInfo struct {
 	FP16TFlops    int32   `yaml:"fp16TFlops"`
 }
 
-// intit NewStaticPricingProvider /internal/cloudprovider/pricing/aws_ec2.csv,az.csv get the pricing and GPU info
-// and /charts/tensor-fusion/templates/gpu-public-gpu-info.yaml to get the fp16TFlops info
-// GPUNodeInstanceInfo info need: InstanceType,CPUs,MemoryGiB,GPUModel,GPUCount,CPUArchitecture,GPUArchitecture,VRAMGigabytesPerGPU
-// FP16TFlopsPerGPU is from /charts/tensor-fusion/templates/gpu-public-gpu-info.yaml
-// CostPerHour use the linux ondemond pricing
 func NewStaticPricingProvider() *StaticPricingProvider {
-	p := &StaticPricingProvider{
-		awsGPUInstanceData:   make(map[string]GPUNodeInstanceInfoAndPrice),
-		azureGPUInstanceData: make(map[string]GPUNodeInstanceInfoAndPrice),
-		gpuModelToFP16TFlops: make(map[string]int32),
-	}
-	p.loadStaticData()
-	return p
-}
-
-// intit NewStaticPricingProvider /internal/cloudprovider/pricing/aws_ec2.csv,az.csv get the pricing and GPU info
-// and /charts/tensor-fusion/templates/gpu-public-gpu-info.yaml to get the fp16TFlops info
-// GPUNodeInstanceInfo info need: InstanceType,CPUs,MemoryGiB,GPUModel,GPUCount,CPUArchitecture,GPUArchitecture,VRAMGigabytesPerGPU
-// FP16TFlopsPerGPU is from /charts/tensor-fusion/templates/gpu-public-gpu-info.yaml
-// CostPerHour use the linux ondemond pricing
-// aws_ec2.csv GPU model need exchange to types.GPUArchitectureEnum
-// az.csv only have the GPUS, and it look like : 8X V100 (NVlink), also need analize the GPU model and get the GPUCount
-func (p *StaticPricingProvider) loadStaticData() {
-	// Load GPU model to FP16TFlops mapping from YAML
-	p.loadGPUInfoFromYAML()
-
-	// Load AWS and Azure instance data from CSV files
-	p.loadCSVInstanceData("internal/cloudprovider/pricing/aws_ec2.csv", providerAWS)
-	p.loadCSVInstanceData("internal/cloudprovider/pricing/az.csv", providerAzure)
+	return &StaticPricingProvider{}
 }
 
 // getProjectPath returns the absolute path to a file relative to project root
@@ -162,7 +149,7 @@ func getProjectPath(relativePath string) string {
 }
 
 // loadGPUInfoFromYAML loads GPU model to FP16TFlops mapping from YAML file
-func (p *StaticPricingProvider) loadGPUInfoFromYAML() {
+func loadGPUInfoFromYAML() {
 	yamlFile := getProjectPath("charts/tensor-fusion/templates/gpu-public-gpu-info.yaml")
 
 	file, err := os.Open(yamlFile)
@@ -205,14 +192,14 @@ func (p *StaticPricingProvider) loadGPUInfoFromYAML() {
 
 	// Build mapping from GPU model to FP16TFlops
 	for _, gpu := range gpuInfos {
-		p.gpuModelToFP16TFlops[gpu.Model] = gpu.FP16TFlops
+		globalGPUModelToFP16TFlops[gpu.Model] = gpu.FP16TFlops
 		// Also add full model name as key for better matching
-		p.gpuModelToFP16TFlops[gpu.FullModelName] = gpu.FP16TFlops
+		globalGPUModelToFP16TFlops[gpu.FullModelName] = gpu.FP16TFlops
 	}
 }
 
 // loadCSVInstanceData loads instance data from CSV files (unified for AWS and Azure)
-func (p *StaticPricingProvider) loadCSVInstanceData(relativePath, provider string) {
+func loadCSVInstanceData(relativePath, provider string) {
 	csvFile := getProjectPath(relativePath)
 
 	file, err := os.Open(csvFile)
@@ -252,9 +239,9 @@ func (p *StaticPricingProvider) loadCSVInstanceData(relativePath, provider strin
 
 		switch provider {
 		case providerAWS:
-			instanceInfo, prices = p.parseAWSRecord(record)
+			instanceInfo, prices = parseAWSRecord(record)
 		case providerAzure:
-			instanceInfo, prices = p.parseAzureRecord(record)
+			instanceInfo, prices = parseAzureRecord(record)
 		default:
 			continue
 		}
@@ -268,15 +255,15 @@ func (p *StaticPricingProvider) loadCSVInstanceData(relativePath, provider strin
 		}
 
 		if provider == providerAWS {
-			p.awsGPUInstanceData[instanceInfo.InstanceType] = instanceInfoAndPrice
+			globalAWSGPUInstanceData[instanceInfo.InstanceType] = instanceInfoAndPrice
 		} else {
-			p.azureGPUInstanceData[instanceInfo.InstanceType] = instanceInfoAndPrice
+			globalAzureGPUInstanceData[instanceInfo.InstanceType] = instanceInfoAndPrice
 		}
 	}
 }
 
 // parseAWSRecord parses a single AWS CSV record
-func (p *StaticPricingProvider) parseAWSRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
+func parseAWSRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 	instanceType := record[1]     // API Name
 	memory := record[2]           // Instance Memory
 	gpuCountStr := record[3]      // GPUs
@@ -289,7 +276,7 @@ func (p *StaticPricingProvider) parseAWSRecord(record []string) (types.GPUNodeIn
 		InstanceType:        instanceType,
 		CostPerHour:         parsePrice(onDemandPriceStr),
 		MemoryGiB:           parseMemory(memory),
-		FP16TFlopsPerGPU:    p.getFP16TFlops(gpuModel),
+		FP16TFlopsPerGPU:    getFP16TFlops(gpuModel),
 		VRAMGigabytesPerGPU: parseMemory(gpuMemory), // Use same parseMemory function
 		GPUModel:            gpuModel,
 		GPUCount:            parseGPUCount(gpuCountStr),
@@ -306,7 +293,7 @@ func (p *StaticPricingProvider) parseAWSRecord(record []string) (types.GPUNodeIn
 }
 
 // parseAzureRecord parses a single Azure CSV record
-func (p *StaticPricingProvider) parseAzureRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
+func parseAzureRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 	instanceType := record[1]     // API Name
 	memory := record[2]           // Instance Memory
 	gpuSpec := record[3]          // GPUs (e.g., "8X V100 (NVlink)")
@@ -321,7 +308,7 @@ func (p *StaticPricingProvider) parseAzureRecord(record []string) (types.GPUNode
 		InstanceType:        instanceType,
 		CostPerHour:         parsePrice(onDemandPriceStr),
 		MemoryGiB:           parseMemory(memory), // Now Azure has memory info
-		FP16TFlopsPerGPU:    p.getFP16TFlops(gpuModel),
+		FP16TFlopsPerGPU:    getFP16TFlops(gpuModel),
 		VRAMGigabytesPerGPU: 0, // Not provided in Azure CSV
 		GPUModel:            gpuModel,
 		GPUCount:            gpuCount,
@@ -336,8 +323,6 @@ func (p *StaticPricingProvider) parseAzureRecord(record []string) (types.GPUNode
 
 	return info, prices
 }
-
-// Helper functions for parsing data
 
 // parsePrice parses price string like "$21.5000 hourly" or "unavailable"
 func parsePrice(priceStr string) float64 {
@@ -469,9 +454,9 @@ func parseAzureGPUSpec(gpuSpec string) (int32, string) {
 }
 
 // getFP16TFlops gets FP16TFlops for a GPU model
-func (p *StaticPricingProvider) getFP16TFlops(gpuModel string) int32 {
+func getFP16TFlops(gpuModel string) int32 {
 	// Direct lookup
-	if tflops, ok := p.gpuModelToFP16TFlops[gpuModel]; ok {
+	if tflops, ok := globalGPUModelToFP16TFlops[gpuModel]; ok {
 		return tflops
 	}
 
@@ -487,7 +472,7 @@ func (p *StaticPricingProvider) getFP16TFlops(gpuModel string) int32 {
 	}
 
 	for _, variation := range variations {
-		if tflops, ok := p.gpuModelToFP16TFlops[variation]; ok {
+		if tflops, ok := globalGPUModelToFP16TFlops[variation]; ok {
 			return tflops
 		}
 	}
@@ -498,7 +483,7 @@ func (p *StaticPricingProvider) getFP16TFlops(gpuModel string) int32 {
 // GetPringcing gets the pricing for the instanceType, capacityType
 func (p *StaticPricingProvider) GetPringcing(instanceType string, capacityType types.CapacityTypeEnum) (float64, bool) {
 	// Check AWS instances first
-	if info, exists := p.awsGPUInstanceData[instanceType]; exists {
+	if info, exists := globalAWSGPUInstanceData[instanceType]; exists {
 		switch capacityType {
 		case types.CapacityTypeOnDemand:
 			return info.onDemandPrice, true
@@ -510,7 +495,7 @@ func (p *StaticPricingProvider) GetPringcing(instanceType string, capacityType t
 	}
 
 	// Check Azure instances
-	if info, exists := p.azureGPUInstanceData[instanceType]; exists {
+	if info, exists := globalAzureGPUInstanceData[instanceType]; exists {
 		switch capacityType {
 		case types.CapacityTypeOnDemand:
 			return info.onDemandPrice, true
@@ -526,18 +511,15 @@ func (p *StaticPricingProvider) GetPringcing(instanceType string, capacityType t
 
 // GetGPUNodeInstanceTypeInfoByInstance gets the gpu info for the instanceType, region
 func (p *StaticPricingProvider) GetGPUNodeInstanceTypeInfoByInstance(instanceType string, region string) ([]types.GPUNodeInstanceInfo, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
 	var results []types.GPUNodeInstanceInfo
 
 	// Check AWS instances first
-	if info, exists := p.awsGPUInstanceData[instanceType]; exists {
+	if info, exists := globalAWSGPUInstanceData[instanceType]; exists {
 		results = append(results, info.GPUNodeInstanceInfo)
 	}
 
 	// Check Azure instances
-	if info, exists := p.azureGPUInstanceData[instanceType]; exists {
+	if info, exists := globalAzureGPUInstanceData[instanceType]; exists {
 		results = append(results, info.GPUNodeInstanceInfo)
 	}
 
@@ -546,20 +528,17 @@ func (p *StaticPricingProvider) GetGPUNodeInstanceTypeInfoByInstance(instanceTyp
 
 // GetGPUNodeInstanceTypeInfo implements PricingProvider interface
 func (p *StaticPricingProvider) GetGPUNodeInstanceTypeInfo(region string) ([]types.GPUNodeInstanceInfo, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
 	// Pre-allocate slice with estimated capacity
-	instanceTypes := make([]types.GPUNodeInstanceInfo, 0, len(p.awsGPUInstanceData)+len(p.azureGPUInstanceData))
+	instanceTypes := make([]types.GPUNodeInstanceInfo, 0, len(globalAWSGPUInstanceData)+len(globalAzureGPUInstanceData))
 
 	// Collect all instance types from AWS
-	for instanceType := range p.awsGPUInstanceData {
-		instanceTypes = append(instanceTypes, p.awsGPUInstanceData[instanceType].GPUNodeInstanceInfo)
+	for instanceType := range globalAWSGPUInstanceData {
+		instanceTypes = append(instanceTypes, globalAWSGPUInstanceData[instanceType].GPUNodeInstanceInfo)
 	}
 
 	// Collect all instance types from Azure
-	for instanceType := range p.azureGPUInstanceData {
-		instanceTypes = append(instanceTypes, p.azureGPUInstanceData[instanceType].GPUNodeInstanceInfo)
+	for instanceType := range globalAzureGPUInstanceData {
+		instanceTypes = append(instanceTypes, globalAzureGPUInstanceData[instanceType].GPUNodeInstanceInfo)
 	}
 
 	return instanceTypes, len(instanceTypes) > 0
