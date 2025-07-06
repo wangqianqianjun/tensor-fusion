@@ -23,7 +23,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"gomodules.xyz/jsonpatch/v2"
@@ -37,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	"al.essio.dev/pkg/shellescape"
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/portallocator"
@@ -104,7 +102,7 @@ func (m *TensorFusionPodMutator) Handle(ctx context.Context, req admission.Reque
 			return admission.Errored(http.StatusInternalServerError, fmt.Errorf("get tf pod count: %w", err))
 		}
 		if podCount >= *enabledReplicas {
-			return admission.Allowed("tf pod count exceeds enabled replicas")
+			return admission.Allowed("tensor fusion pod count reached, keep original Pod for tensor fusion grey releasing")
 		}
 		podCounterAnnotationKey = podCounterKey
 	}
@@ -131,10 +129,30 @@ func (m *TensorFusionPodMutator) Handle(ctx context.Context, req admission.Reque
 		// for remote vGPU mode, start worker with tensor-fusion scheduler
 		pod.Spec.SchedulerName = constants.SchedulerName
 	}
-	addOrOverridePodMissingAnnotations(pod, tfInfo)
+
+	// find container index
+	containerIndices := []int{}
+	for _, name := range tfInfo.ContainerNames {
+		for i := range pod.Spec.Containers {
+			if pod.Spec.Containers[i].Name == name {
+				containerIndices = append(containerIndices, i)
+				break
+			}
+		}
+	}
+
+	if len(containerIndices) == 0 {
+		return admission.Allowed("no valid container to inject tensor-fusion, skipped")
+	}
+
+	// Add defaults and tensor-fusion injection logic
+	utils.AddOrOverrideTFClientMissingAnnotationsBeforePatch(pod, tfInfo)
+	utils.AddTFDefaultClientConfBeforePatch(ctx, pod, pool, tfInfo, containerIndices)
 
 	// Inject initContainer and env variables
-	patches, err := m.patchTFClient(pod, pool, tfInfo.ContainerNames, tfInfo.Profile.IsLocalGPU, currentBytes)
+	patches, err := m.patchTFClient(
+		pod, pool, tfInfo.Profile.IsLocalGPU, currentBytes, containerIndices,
+	)
 	if err != nil {
 		log.Error(err, "failed to patch tf client", "pod", req.Name, "namespace", req.Namespace)
 		return admission.Errored(http.StatusInternalServerError, err)
@@ -162,29 +180,7 @@ func (m *TensorFusionPodMutator) InjectDecoder(d admission.Decoder) error {
 	return nil
 }
 
-func addOrOverridePodMissingAnnotations(pod *corev1.Pod, tfInfo TensorFusionInfo) {
-	if pod.Annotations == nil {
-		pod.Annotations = make(map[string]string)
-	}
-	// add workload to pod annotations just for additional information
-	// so that users will know which GPU workload this pod binds to
-	pod.Annotations[constants.WorkloadKey] = tfInfo.WorkloadName
-
-	// add full annotations
-	pod.Annotations[constants.TFLOPSLimitAnnotation] = tfInfo.Profile.Resources.Limits.Tflops.String()
-	pod.Annotations[constants.VRAMLimitAnnotation] = tfInfo.Profile.Resources.Limits.Vram.String()
-	pod.Annotations[constants.TFLOPSRequestAnnotation] = tfInfo.Profile.Resources.Requests.Tflops.String()
-	pod.Annotations[constants.VRAMRequestAnnotation] = tfInfo.Profile.Resources.Requests.Vram.String()
-	pod.Annotations[constants.GpuCountAnnotation] = fmt.Sprintf("%d", tfInfo.Profile.GPUCount)
-	pod.Annotations[constants.GpuPoolKey] = tfInfo.Profile.PoolName
-	pod.Annotations[constants.GPUModelAnnotation] = tfInfo.Profile.GPUModel
-	pod.Annotations[constants.IsLocalGPUAnnotation] = strconv.FormatBool(tfInfo.Profile.IsLocalGPU)
-
-	// add inject container annotation for client Pod, in case user doesn't specify it
-	pod.Annotations[constants.InjectContainerAnnotation] = strings.Join(tfInfo.ContainerNames, ",")
-}
-
-func (m *TensorFusionPodMutator) createOrUpdateWorkload(ctx context.Context, pod *corev1.Pod, tfInfo *TensorFusionInfo, workload *tfv1.TensorFusionWorkload, pool *tfv1.GPUPool) error {
+func (m *TensorFusionPodMutator) createOrUpdateWorkload(ctx context.Context, pod *corev1.Pod, tfInfo *utils.TensorFusionInfo, workload *tfv1.TensorFusionWorkload, pool *tfv1.GPUPool) error {
 	qos := calculateQoSLevel(tfInfo.Profile, pool)
 
 	err := m.Client.Get(ctx, client.ObjectKey{Name: tfInfo.WorkloadName, Namespace: pod.Namespace}, workload)
@@ -250,9 +246,9 @@ func (m *TensorFusionPodMutator) createOrUpdateWorkload(ctx context.Context, pod
 func (m *TensorFusionPodMutator) patchTFClient(
 	pod *corev1.Pod,
 	pool *tfv1.GPUPool,
-	containerNames []string,
 	isLocalGPU bool,
 	currentBytes []byte,
+	containerIndices []int,
 ) ([]jsonpatch.JsonPatchOperation, error) {
 	clientConfig := pool.Spec.ComponentConfig.Client
 
@@ -263,54 +259,37 @@ func (m *TensorFusionPodMutator) patchTFClient(
 
 	assignPodLabelsAndAnnotations(isLocalGPU, pod, pool)
 
-	containerPatched := false
-	// Patch to Container
-	for _, name := range containerNames {
-		for i := range pod.Spec.Containers {
-			container := &pod.Spec.Containers[i]
-			if container.Name != name {
-				continue
-			}
-
-			if len(container.Command) >= 3 {
-				manipulateContainerCmdForLDPreload(container)
-			}
-
-			containerJSON, err := json.Marshal(container)
-			if err != nil {
-				return nil, fmt.Errorf("marshal container: %w", err)
-			}
-
-			var patchJSON []byte
-			patchJSON, err = serializeContainerInjectionPatchJson(clientConfig, patchJSON, isLocalGPU)
-			if err != nil {
-				return nil, err
-			}
-
-			patchedJSON, err := strategicpatch.StrategicMergePatch(containerJSON, patchJSON, corev1.Container{})
-			if err != nil {
-				return nil, fmt.Errorf("apply strategic merge patch to container: %w", err)
-			}
-
-			// validate if container decoded successfully after merge patch
-			container = &corev1.Container{}
-			if err := json.Unmarshal(patchedJSON, container); err != nil {
-				return nil, fmt.Errorf("unmarshal patched container, invalid container patch: %w", err)
-			}
-
-			removeNativeGPUResourceClaim(container)
-
-			if !isLocalGPU {
-				addConnectionForRemoteFixedReplicaVirtualGPU(pod, container, clientConfig)
-			}
-			containerPatched = true
-
-			pod.Spec.Containers[i] = *container
+	for _, containerIndex := range containerIndices {
+		container := &pod.Spec.Containers[containerIndex]
+		containerJSON, err := json.Marshal(container)
+		if err != nil {
+			return nil, fmt.Errorf("marshal container: %w", err)
 		}
-	}
 
-	if !containerPatched {
-		return nil, fmt.Errorf("no container found that needs tensor fusion runtime injection")
+		var patchJSON []byte
+		patchJSON, err = serializeContainerInjectionPatchJson(clientConfig, patchJSON, isLocalGPU)
+		if err != nil {
+			return nil, err
+		}
+
+		patchedJSON, err := strategicpatch.StrategicMergePatch(containerJSON, patchJSON, corev1.Container{})
+		if err != nil {
+			return nil, fmt.Errorf("apply strategic merge patch to container: %w", err)
+		}
+
+		// validate if container decoded successfully after merge patch
+		container = &corev1.Container{}
+		if err := json.Unmarshal(patchedJSON, container); err != nil {
+			return nil, fmt.Errorf("unmarshal patched container, invalid container patch: %w", err)
+		}
+
+		removeNativeGPUResourceClaim(container)
+
+		if !isLocalGPU {
+			addConnectionForRemoteFixedReplicaVirtualGPU(pod, container, clientConfig)
+		}
+
+		pod.Spec.Containers[containerIndex] = *container
 	}
 
 	// Patch hostPort allocation
@@ -335,7 +314,6 @@ func (m *TensorFusionPodMutator) patchTFClient(
 	if err != nil {
 		return nil, fmt.Errorf("calculate pod patch: %w", err)
 	}
-
 	patches = append(patches, strategicpatches...)
 	return patches, nil
 }
@@ -431,18 +409,6 @@ func serializeContainerInjectionPatchJson(clientConfig *tfv1.ClientConfig, patch
 		}
 	}
 	return patchJSON, nil
-}
-
-// fix for issue https://github.com/NexusGPU/tensor-fusion/issues/164
-// transform bash/zsh -c commands
-func manipulateContainerCmdForLDPreload(container *corev1.Container) {
-	shell := container.Command[0]
-	if (shell == "bash" || shell == "zsh") && container.Command[1] == "-c" {
-		originalCommand := container.Command[2]
-		comment := "# [TensorFusion Patch] This command is wrapped by sh -c to improve compatibility with certain container environments."
-		safeCommand := shellescape.Quote(fmt.Sprintf("%s\n%s", comment, originalCommand))
-		container.Command = []string{"sh", "-c", fmt.Sprintf("%s -c %s", shell, safeCommand)}
-	}
 }
 
 func (m *TensorFusionPodMutator) generateHostPort(pod *corev1.Pod, portName string) error {
