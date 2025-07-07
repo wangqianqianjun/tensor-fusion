@@ -271,15 +271,21 @@ func parseAWSRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 	gpuMemory := record[5]        // GPU memory
 	onDemandPriceStr := record[8] // On Demand
 	reservedPriceStr := record[9] // Linux Reserved cost
+	totalMemory := parseMemory(gpuMemory)
+	gpuCount := parseGPUCount(gpuCountStr)
+	var perGPUMemory int32
+	if gpuCount != 0 {
+		perGPUMemory = totalMemory / gpuCount
+	}
 
 	info := types.GPUNodeInstanceInfo{
 		InstanceType:        instanceType,
 		CostPerHour:         parsePrice(onDemandPriceStr),
 		MemoryGiB:           parseMemory(memory),
 		FP16TFlopsPerGPU:    getFP16TFlops(gpuModel),
-		VRAMGigabytesPerGPU: parseMemory(gpuMemory), // Use same parseMemory function
+		VRAMGigabytesPerGPU: perGPUMemory,
 		GPUModel:            gpuModel,
-		GPUCount:            parseGPUCount(gpuCountStr),
+		GPUCount:            gpuCount,
 		GPUArchitecture:     parseGPUArchitecture(gpuModel),
 	}
 
@@ -536,10 +542,10 @@ func (p *StaticPricingProvider) GetGPUNodeInstanceTypeInfo(region string) ([]typ
 		instanceTypes = append(instanceTypes, globalAWSGPUInstanceData[instanceType].GPUNodeInstanceInfo)
 	}
 
-	// Collect all instance types from Azure
-	for instanceType := range globalAzureGPUInstanceData {
-		instanceTypes = append(instanceTypes, globalAzureGPUInstanceData[instanceType].GPUNodeInstanceInfo)
-	}
+	// region only support aws now
+	// for instanceType := range globalAzureGPUInstanceData {
+	// 	instanceTypes = append(instanceTypes, globalAzureGPUInstanceData[instanceType].GPUNodeInstanceInfo)
+	// }
 
 	return instanceTypes, len(instanceTypes) > 0
 }
