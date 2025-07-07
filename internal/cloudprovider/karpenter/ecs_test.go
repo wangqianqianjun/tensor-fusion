@@ -391,7 +391,7 @@ func TestKarpenterGPUNodeProvider_parseKarpenterConfig(t *testing.T) {
 
 	t.Run(tests[1].name, func(t *testing.T) {
 		result := provider.parseKarpenterConfig(tests[1].param)
-		assert.Equal(t, tests[1].expected, string(result.NodeClassRef.Name))
+		assert.Equal(t, tests[1].expected, result.NodeClassRef.Name)
 	})
 
 }
