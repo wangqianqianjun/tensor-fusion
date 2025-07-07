@@ -98,6 +98,7 @@ func (s *GPUFit) PreFilter(ctx context.Context, state *framework.CycleState, pod
 
 	filteredGPUs, err := s.allocator.CheckQuotaAndFilter(ctx, &allocRequest)
 	if err != nil {
+		s.logger.Error(err, "failed to check quota and filter", "pod", pod.Name)
 		return nil, framework.NewStatus(framework.Unschedulable, err.Error())
 	}
 
@@ -113,6 +114,7 @@ func (s *GPUFit) PreFilter(ctx context.Context, state *framework.CycleState, pod
 			nodeNames.Insert(k)
 		}
 	}
+	s.logger.Info("filtered valid node GPUs", "validNodeGPU count", len(validNodeGPUs), "nodeNames count", nodeNames.Len(), "pod", pod.Name)
 
 	// assign score based on different strategies
 	score := s.allocator.Score(ctx, s.cfg, allocRequest, validNodeGPUs)
