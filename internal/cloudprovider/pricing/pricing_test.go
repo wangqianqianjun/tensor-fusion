@@ -157,3 +157,10 @@ func TestParseHelperFunctions(t *testing.T) {
 	assert.Equal(t, int32(4), count)
 	assert.Equal(t, "A100", model)
 }
+
+func TestIsFractionalGPUCount(t *testing.T) {
+	provider := NewStaticPricingProvider()
+	price, found := provider.GetPringcing("NV12ads v710 v5", types.CapacityTypeOnDemand)
+	assert.False(t, found)
+	assert.Equal(t, 0.0, price)
+}

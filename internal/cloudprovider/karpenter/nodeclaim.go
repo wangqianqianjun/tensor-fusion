@@ -187,7 +187,6 @@ func (p KarpenterGPUNodeProvider) GetNodeStatus(ctx context.Context, param *type
 
 func (p KarpenterGPUNodeProvider) GetInstancePricing(instanceType string, region string, capacityType types.CapacityTypeEnum) (float64, error) {
 	// Use the static pricing provider for calculations
-	// Only support on-demand pricing for now
 	if price, exists := p.pricingProvider.GetPringcing(instanceType, capacityType); exists {
 		return price, nil
 	}

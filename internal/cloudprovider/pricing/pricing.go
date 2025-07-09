@@ -101,7 +101,7 @@ func init() {
 	globalGPUModelToFP16TFlops = make(map[string]int32)
 
 	// Load GPU model to FP16TFlops mapping from YAML
-	loadGPUInfoFromYAML()
+	loadGPUInfoFromYAML("charts/tensor-fusion/templates/gpu-public-gpu-info.yaml")
 
 	// Load AWS and Azure instance data from CSV files
 	loadCSVInstanceData("internal/cloudprovider/pricing/aws_ec2.csv", providerAWS)
@@ -149,8 +149,8 @@ func getProjectPath(relativePath string) string {
 }
 
 // loadGPUInfoFromYAML loads GPU model to FP16TFlops mapping from YAML file
-func loadGPUInfoFromYAML() {
-	yamlFile := getProjectPath("charts/tensor-fusion/templates/gpu-public-gpu-info.yaml")
+func loadGPUInfoFromYAML(path string) {
+	yamlFile := getProjectPath(path)
 
 	file, err := os.Open(yamlFile)
 	if err != nil {
@@ -242,6 +242,10 @@ func loadCSVInstanceData(relativePath, provider string) {
 			instanceInfo, prices = parseAWSRecord(record)
 		case providerAzure:
 			instanceInfo, prices = parseAzureRecord(record)
+			// Filter out Azure instances with fractional GPU counts (GPUCount = 0)
+			if instanceInfo.GPUCount == 0 {
+				continue // Skip this record, don't store it in memory
+			}
 		default:
 			continue
 		}
@@ -408,8 +412,31 @@ func parseAMDGPUArchitecture(gpuModel string) types.GPUArchitectureEnum {
 	return types.GPUArchitectureNvidiaAmpere
 }
 
+// isFractionalGPUCount checks if the GPU specification contains fractional GPU count
+func isFractionalGPUCount(gpuSpec string) bool {
+	// Check for common fractional patterns in Azure GPU specs
+	fractionalPatterns := []string{
+		"/",   // Direct fraction like "1/2", "1/3", "1/4", "1/6", "1/8"
+		"th ", // Like "1/8th MI25"
+	}
+
+	for _, pattern := range fractionalPatterns {
+		if strings.Contains(gpuSpec, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // parseAzureGPUSpec parses Azure GPU specification like "8X V100 (NVlink)" or "1X H100"
+// Returns (0, "") for fractional GPU counts to indicate they should be filtered out
 func parseAzureGPUSpec(gpuSpec string) (int32, string) {
+	// First check if this is a fractional GPU count that should be filtered out
+	if isFractionalGPUCount(gpuSpec) {
+		return 0, "" // Return 0 count to indicate this should be filtered
+	}
+
 	// Use regex to extract count and model
 	re := regexp.MustCompile(`(\d+)[xX]\s*([^(]+)`)
 	matches := re.FindStringSubmatch(gpuSpec)
