@@ -63,7 +63,7 @@ func (s *GPUResourcesSuite) SetupTest() {
 					constants.TFLOPSLimitAnnotation:   "100",
 					constants.VRAMLimitAnnotation:     "4Gi",
 					constants.GpuCountAnnotation:      "1",
-					constants.GpuKey:                  "gpu-1",
+					constants.GPUDeviceIDsAnnotation:  "gpu-1",
 				},
 			},
 			Spec: v1.PodSpec{
@@ -244,6 +244,7 @@ func (s *GPUResourcesSuite) SetupTest() {
 	err = s.allocator.InitGPUAndQuotaStore()
 	s.NoError(err)
 	s.allocator.ReconcileAllocationState()
+	s.allocator.SetAllocatorReady()
 
 	pluginFactory := NewWithDeps(s.allocator, s.client)
 	pluginConfig := &runtime.Unknown{
@@ -547,8 +548,8 @@ func (s *GPUResourcesSuite) makePod(name string, annotations map[string]string) 
 		UID(name).
 		ZeroTerminationGracePeriod().Obj()
 	pod.Labels = map[string]string{
-		constants.TensorFusionEnabledLabelKey: "true",
-		constants.WorkloadKey:                 "workload-1",
+		constants.LabelComponent: constants.ComponentWorker,
+		constants.WorkloadKey:    "workload-1",
 	}
 	pod.Annotations = annotations
 	if pod.Annotations == nil {
