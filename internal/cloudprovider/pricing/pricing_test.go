@@ -164,3 +164,25 @@ func TestIsFractionalGPUCount(t *testing.T) {
 	assert.False(t, found)
 	assert.Equal(t, 0.0, price)
 }
+
+func TestUnavaliableGPUCount(t *testing.T) {
+	provider := NewStaticPricingProvider()
+	price, found := provider.GetPringcing("NG32ads V620 v1", types.CapacityTypeOnDemand)
+	assert.False(t, found)
+	assert.Equal(t, 0.0, price)
+}
+
+func TestAZGPUNodeInstanceInfo(t *testing.T) {
+	provider := NewStaticPricingProvider()
+	ND12s, found := provider.GetGPUNodeInstanceTypeInfoByInstance("ND12s", "eastus")
+	assert.True(t, found)
+	assert.Equal(t, int32(2), ND12s[0].GPUCount)
+	assert.Equal(t, "P40", ND12s[0].GPUModel)
+	assert.Equal(t, int32(24), ND12s[0].VRAMGigabytesPerGPU)
+
+	ND96isr, found := provider.GetGPUNodeInstanceTypeInfoByInstance("ND96isr H200 v5", "eastus")
+	assert.True(t, found)
+	assert.Equal(t, int32(8), ND96isr[0].GPUCount)
+	assert.Equal(t, "H200", ND96isr[0].GPUModel)
+	assert.Equal(t, int32(141), ND96isr[0].VRAMGigabytesPerGPU)
+}

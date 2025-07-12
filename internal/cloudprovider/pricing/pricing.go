@@ -310,6 +310,8 @@ func parseAzureRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 	onDemandPriceStr := record[4] // Linux On Demand cost
 	reservedPriceStr := record[5] // Linux Reserved cost
 	spotPriceStr := record[6]     // Linux Spot cost
+	gpuMemory := record[11]       // GPU memory(per gpu)
+	gpuMemoryInt := parseMemory(gpuMemory)
 
 	// Parse GPU info from spec
 	gpuCount, gpuModel := parseAzureGPUSpec(gpuSpec)
@@ -319,7 +321,7 @@ func parseAzureRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 		CostPerHour:         parsePrice(onDemandPriceStr),
 		MemoryGiB:           parseMemory(memory), // Now Azure has memory info
 		FP16TFlopsPerGPU:    getFP16TFlops(gpuModel),
-		VRAMGigabytesPerGPU: 0, // Not provided in Azure CSV
+		VRAMGigabytesPerGPU: gpuMemoryInt, // Not provided in Azure CSV
 		GPUModel:            gpuModel,
 		GPUCount:            gpuCount,
 		GPUArchitecture:     parseGPUArchitecture(gpuModel),
@@ -361,8 +363,10 @@ func parseGPUCount(countStr string) int32 {
 
 // parseMemory parses memory string like "512 GiB" or "2048 GiB"
 func parseMemory(memoryStr string) int32 {
+
 	memoryStr = strings.ReplaceAll(memoryStr, " GiB", "")
-	memoryStr = strings.ReplaceAll(memoryStr, " GB", "")
+	memoryStr = strings.ReplaceAll(memoryStr, "GB", "")
+	memoryStr = strings.TrimSpace(memoryStr)
 
 	if memory, err := strconv.ParseInt(memoryStr, 10, 32); err == nil {
 		return int32(memory)
@@ -450,40 +454,7 @@ func parseAzureGPUSpec(gpuSpec string) (int32, string) {
 
 		return int32(count), model
 	}
-
-	// Fallback: try to extract model name directly
-	if strings.Contains(gpuSpec, "V100") {
-		return 1, "V100"
-	}
-	if strings.Contains(gpuSpec, "H100") {
-		return 1, "H100"
-	}
-	if strings.Contains(gpuSpec, "H200") {
-		return 1, "H200"
-	}
-	if strings.Contains(gpuSpec, "A100") {
-		return 1, "A100"
-	}
-	if strings.Contains(gpuSpec, "T4") {
-		return 1, "T4"
-	}
-	if strings.Contains(gpuSpec, "A10") {
-		return 1, "A10"
-	}
-	if strings.Contains(gpuSpec, "P100") {
-		return 1, "P100"
-	}
-	if strings.Contains(gpuSpec, "P40") {
-		return 1, "P40"
-	}
-	if strings.Contains(gpuSpec, "K80") {
-		return 1, "K80"
-	}
-	if strings.Contains(gpuSpec, "M60") {
-		return 1, "M60"
-	}
-
-	return 1, "Unknown"
+	return 0, ""
 }
 
 // getFP16TFlops gets FP16TFlops for a GPU model
