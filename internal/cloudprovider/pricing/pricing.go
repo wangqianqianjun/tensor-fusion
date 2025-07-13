@@ -39,54 +39,6 @@ const (
 	providerAzure = "azure"
 )
 
-// GPU architecture mapping tables
-var (
-	nvidiaArchitectures = map[string]types.GPUArchitectureEnum{
-		"V100":         types.GPUArchitectureNvidiaVolta,
-		"TESLA V100":   types.GPUArchitectureNvidiaVolta,
-		"T4":           types.GPUArchitectureNvidiaTuring,
-		"RTX 20":       types.GPUArchitectureNvidiaTuring,
-		"RTX20":        types.GPUArchitectureNvidiaTuring,
-		"A100":         types.GPUArchitectureNvidiaAmpere,
-		"A40":          types.GPUArchitectureNvidiaAmpere,
-		"A10":          types.GPUArchitectureNvidiaAmpere,
-		"A6000":        types.GPUArchitectureNvidiaAmpere,
-		"RTX 30":       types.GPUArchitectureNvidiaAmpere,
-		"RTX30":        types.GPUArchitectureNvidiaAmpere,
-		"A800":         types.GPUArchitectureNvidiaAmpere,
-		"L4":           types.GPUArchitectureNvidiaAdaLovelace,
-		"L40":          types.GPUArchitectureNvidiaAdaLovelace,
-		"RTX 40":       types.GPUArchitectureNvidiaAdaLovelace,
-		"RTX40":        types.GPUArchitectureNvidiaAdaLovelace,
-		"RTX 6000 ADA": types.GPUArchitectureNvidiaAdaLovelace,
-		"H100":         types.GPUArchitectureNvidiaHopper,
-		"H200":         types.GPUArchitectureNvidiaHopper,
-		"H800":         types.GPUArchitectureNvidiaHopper,
-		"H20":          types.GPUArchitectureNvidiaHopper,
-		"B200":         types.GPUArchitectureNvidiaBlackwell,
-		"RTX 50":       types.GPUArchitectureNvidiaBlackwell,
-		"RTX50":        types.GPUArchitectureNvidiaBlackwell,
-	}
-
-	amdArchitectures = map[string]types.GPUArchitectureEnum{
-		"MI25":  types.GPUArchitectureAMDCDNA1,
-		"MI50":  types.GPUArchitectureAMDCDNA1,
-		"MI60":  types.GPUArchitectureAMDCDNA1,
-		"MI100": types.GPUArchitectureAMDCDNA2,
-		"MI200": types.GPUArchitectureAMDCDNA2,
-		"MI210": types.GPUArchitectureAMDCDNA2,
-		"MI250": types.GPUArchitectureAMDCDNA2,
-		"MI300": types.GPUArchitectureAMDCDNA3,
-		"RX 6":  types.GPUArchitectureAMDRDNA2,
-		"RX6":   types.GPUArchitectureAMDRDNA2,
-		"RX 7":  types.GPUArchitectureAMDRDNA3,
-		"RX7":   types.GPUArchitectureAMDRDNA3,
-		"V520":  types.GPUArchitectureAMDRDNA2,
-		"V620":  types.GPUArchitectureAMDRDNA2,
-		"V710":  types.GPUArchitectureAMDRDNA2,
-	}
-)
-
 // Global data initialized at package load time
 var (
 	globalAWSGPUInstanceData   map[string]GPUNodeInstanceInfoAndPrice
@@ -290,7 +242,6 @@ func parseAWSRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 		VRAMGigabytesPerGPU: perGPUMemory,
 		GPUModel:            gpuModel,
 		GPUCount:            gpuCount,
-		GPUArchitecture:     parseGPUArchitecture(gpuModel),
 	}
 
 	prices := [3]float64{
@@ -324,7 +275,6 @@ func parseAzureRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 		VRAMGigabytesPerGPU: gpuMemoryInt, // Not provided in Azure CSV
 		GPUModel:            gpuModel,
 		GPUCount:            gpuCount,
-		GPUArchitecture:     parseGPUArchitecture(gpuModel),
 	}
 
 	prices := [3]float64{
@@ -372,48 +322,6 @@ func parseMemory(memoryStr string) int32 {
 		return int32(memory)
 	}
 	return 0
-}
-
-// parseGPUArchitecture converts GPU model to GPUArchitectureEnum
-func parseGPUArchitecture(gpuModel string) types.GPUArchitectureEnum {
-	gpuModel = strings.ToUpper(gpuModel)
-
-	// Check NVIDIA architectures first
-	if arch := parseNvidiaGPUArchitecture(gpuModel); arch != types.GPUArchitectureNvidiaAmpere {
-		return arch
-	}
-
-	// Check AMD architectures
-	if arch := parseAMDGPUArchitecture(gpuModel); arch != types.GPUArchitectureNvidiaAmpere {
-		return arch
-	}
-
-	// Default to Ampere for unknown GPUs
-	return types.GPUArchitectureNvidiaAmpere
-}
-
-// parseNvidiaGPUArchitecture parses NVIDIA GPU architectures
-func parseNvidiaGPUArchitecture(gpuModel string) types.GPUArchitectureEnum {
-	for model, arch := range nvidiaArchitectures {
-		if strings.Contains(gpuModel, model) {
-			return arch
-		}
-	}
-
-	// Return default if no match found
-	return types.GPUArchitectureNvidiaAmpere
-}
-
-// parseAMDGPUArchitecture parses AMD GPU architectures
-func parseAMDGPUArchitecture(gpuModel string) types.GPUArchitectureEnum {
-	for model, arch := range amdArchitectures {
-		if strings.Contains(gpuModel, model) {
-			return arch
-		}
-	}
-
-	// Return default if no match found (indicates non-AMD GPU)
-	return types.GPUArchitectureNvidiaAmpere
 }
 
 // isFractionalGPUCount checks if the GPU specification contains fractional GPU count

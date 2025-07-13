@@ -41,12 +41,10 @@ func TestStaticPricingProvider_AWS(t *testing.T) {
 		assert.Equal(t, instanceType, info.InstanceType, "Instance type should match")
 		assert.Greater(t, info.GPUCount, int32(0), "GPU count should be greater than 0")
 		assert.NotEmpty(t, info.GPUModel, "GPU model should not be empty")
-		assert.NotEqual(t, types.GPUArchitectureEnum(""), info.GPUArchitecture, "GPU architecture should be set")
 
 		t.Logf("AWS %s GPU info:", instanceType)
 		t.Logf("  GPU Model: %s", info.GPUModel)
 		t.Logf("  GPU Count: %d", info.GPUCount)
-		t.Logf("  GPU Architecture: %s", info.GPUArchitecture)
 		t.Logf("  FP16 TFlops per GPU: %d", info.FP16TFlopsPerGPU)
 		t.Logf("  VRAM per GPU: %d GB", info.VRAMGigabytesPerGPU)
 		t.Logf("  Memory: %d GiB", info.MemoryGiB)
@@ -108,12 +106,10 @@ func TestStaticPricingProvider_Azure(t *testing.T) {
 		assert.Equal(t, instanceType, info.InstanceType, "Instance type should match")
 		assert.Greater(t, info.GPUCount, int32(0), "GPU count should be greater than 0")
 		assert.NotEmpty(t, info.GPUModel, "GPU model should not be empty")
-		assert.NotEqual(t, types.GPUArchitectureEnum(""), info.GPUArchitecture, "GPU architecture should be set")
 
 		t.Logf("Azure %s GPU info:", instanceType)
 		t.Logf("  GPU Model: %s", info.GPUModel)
 		t.Logf("  GPU Count: %d", info.GPUCount)
-		t.Logf("  GPU Architecture: %s", info.GPUArchitecture)
 		t.Logf("  FP16 TFlops per GPU: %d", info.FP16TFlopsPerGPU)
 		t.Logf("  VRAM per GPU: %d GB", info.VRAMGigabytesPerGPU)
 		t.Logf("  Memory: %d GiB", info.MemoryGiB)
@@ -136,13 +132,6 @@ func TestParseHelperFunctions(t *testing.T) {
 	assert.Equal(t, int32(512), parseMemory("512 GiB"))
 	assert.Equal(t, int32(2048), parseMemory("2048 GiB"))
 	assert.Equal(t, int32(0), parseMemory("invalid"))
-
-	// Test parseGPUArchitecture
-	assert.Equal(t, types.GPUArchitectureNvidiaVolta, parseGPUArchitecture("NVIDIA Tesla V100"))
-	assert.Equal(t, types.GPUArchitectureNvidiaAmpere, parseGPUArchitecture("NVIDIA A100"))
-	assert.Equal(t, types.GPUArchitectureNvidiaHopper, parseGPUArchitecture("NVIDIA H100"))
-	assert.Equal(t, types.GPUArchitectureNvidiaTuring, parseGPUArchitecture("NVIDIA T4 Tensor Core"))
-	assert.Equal(t, types.GPUArchitectureNvidiaAdaLovelace, parseGPUArchitecture("NVIDIA L4"))
 
 	// Test parseAzureGPUSpec
 	count, model := parseAzureGPUSpec("8X V100 (NVlink)")

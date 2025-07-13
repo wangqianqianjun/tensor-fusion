@@ -11,7 +11,6 @@ import (
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/pricing"
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/types"
-	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/mitchellh/mapstructure"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -132,15 +130,6 @@ func (p KarpenterGPUNodeProvider) TerminateNode(ctx context.Context, param *type
 	}, nodeClaim)
 	if err != nil {
 		return fmt.Errorf("failed to find NodeClaim for instance %s: %v", param.InstanceID, err)
-	}
-	const fin = constants.Finalizer
-	if !controllerutil.ContainsFinalizer(nodeClaim, fin) {
-		// add finalizer
-		patch := client.MergeFrom(nodeClaim.DeepCopy())
-		nodeClaim.Finalizers = append(nodeClaim.Finalizers, fin)
-		if err := p.client.Patch(ctx, nodeClaim, patch); err != nil {
-			return err
-		}
 	}
 
 	err = p.client.Delete(ctx, nodeClaim)
@@ -333,11 +322,11 @@ func (p KarpenterGPUNodeProvider) buildNodeClaim(ctx context.Context, param *typ
 	}
 	// build requirements
 	p.buildRequirements(nodeClaim, param)
-	// build customer labels
-	p.buildCustomerLabels(nodeClaim)
-	// build customer taints
-	p.buildCustomerTaints(nodeClaim)
-	// build termination grace period
+	// build custom labels
+	p.buildCustomLabels(nodeClaim)
+	// build custom taints
+	p.buildCustomTaints(nodeClaim)
+	// build custom termination grace period
 	p.buildTerminationGracePeriod(nodeClaim, *karpenterConfig)
 	return nodeClaim, nil
 }
@@ -398,7 +387,7 @@ func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim,
 		})
 	}
 
-	// 4. customer GPU requirements
+	// 4. custom GPU requirements
 	if p.nodeManagerConfig.NodeProvisioner.GPURequirements != nil {
 		for _, requirement := range p.nodeManagerConfig.NodeProvisioner.GPURequirements {
 			requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
@@ -415,7 +404,7 @@ func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim,
 	}
 }
 
-func (p KarpenterGPUNodeProvider) buildCustomerLabels(nodeClaim *karpv1.NodeClaim) {
+func (p KarpenterGPUNodeProvider) buildCustomLabels(nodeClaim *karpv1.NodeClaim) {
 	if p.nodeManagerConfig.NodeProvisioner.GPULabels == nil {
 		return
 	}
@@ -425,7 +414,7 @@ func (p KarpenterGPUNodeProvider) buildCustomerLabels(nodeClaim *karpv1.NodeClai
 	maps.Copy(nodeClaim.Labels, p.nodeManagerConfig.NodeProvisioner.GPULabels)
 }
 
-func (p KarpenterGPUNodeProvider) buildCustomerTaints(nodeClaim *karpv1.NodeClaim) {
+func (p KarpenterGPUNodeProvider) buildCustomTaints(nodeClaim *karpv1.NodeClaim) {
 	if p.nodeManagerConfig.NodeProvisioner.GPUTaints == nil {
 		return
 	}
