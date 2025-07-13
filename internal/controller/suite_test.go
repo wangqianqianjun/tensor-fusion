@@ -88,7 +88,10 @@ var _ = BeforeSuite(func() {
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			filepath.Join("..", "..", "test", "crd"),
+		},
 		ErrorIfCRDPathMissing: true,
 
 		// The BinaryAssetsDirectory is only required if you want to run the tests directly
@@ -226,6 +229,12 @@ var _ = BeforeSuite(func() {
 		Scheme:        mgr.GetScheme(),
 		Recorder:      mgr.GetEventRecorderFor("TensorFusionWorkload"),
 		PortAllocator: portAllocator,
+	}).SetupWithManager(mgr)
+	Expect(err).ToNot(HaveOccurred())
+
+	err = (&FakeNodeClaimReconciler{
+		client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -395,7 +404,7 @@ func (c *TensorFusionEnv) GetPoolGpuList(poolIndex int) *tfv1.GPUList {
 // When using an existing cluster, the test speed go a lot faster, may change later?
 func (c *TensorFusionEnv) UpdateHypervisorStatus() {
 	GinkgoHelper()
-	if os.Getenv("USE_EXISTING_CLUSTER") != "true" {
+	if os.Getenv("USE_EXISTING_CLUSTER") != constants.TrueStringValue {
 		for poolIndex := range c.poolNodeMap {
 			podList := &corev1.PodList{}
 			Eventually(func(g Gomega) {

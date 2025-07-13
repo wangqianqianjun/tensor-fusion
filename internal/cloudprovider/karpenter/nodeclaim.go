@@ -11,6 +11,7 @@ import (
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/pricing"
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/types"
+	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/mitchellh/mapstructure"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -58,9 +60,10 @@ func NewKarpenterGPUNodeProvider(cfg tfv1.ComputingVendorConfig, client client.C
 	pricingProvider := pricing.NewStaticPricingProvider()
 	// Initialize the Karpenter GPU Node Provider with the provided client
 	return KarpenterGPUNodeProvider{
-		client:          client,
-		config:          cfg,
-		pricingProvider: pricingProvider,
+		client:            client,
+		config:            cfg,
+		nodeManagerConfig: &nodeManagerConfig,
+		pricingProvider:   pricingProvider,
 	}, nil
 }
 
@@ -130,6 +133,16 @@ func (p KarpenterGPUNodeProvider) TerminateNode(ctx context.Context, param *type
 	if err != nil {
 		return fmt.Errorf("failed to find NodeClaim for instance %s: %v", param.InstanceID, err)
 	}
+	const fin = constants.Finalizer
+	if !controllerutil.ContainsFinalizer(nodeClaim, fin) {
+		// add finalizer
+		patch := client.MergeFrom(nodeClaim.DeepCopy())
+		nodeClaim.Finalizers = append(nodeClaim.Finalizers, fin)
+		if err := p.client.Patch(ctx, nodeClaim, patch); err != nil {
+			return err
+		}
+	}
+
 	err = p.client.Delete(ctx, nodeClaim)
 	if err != nil {
 		return fmt.Errorf("failed to delete NodeClaim for instance %s: %v", param.InstanceID, err)

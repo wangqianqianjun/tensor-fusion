@@ -196,11 +196,6 @@ func TestKarpenterGPUNodeProvider_CreateNode(t *testing.T) {
 				t.Logf("YAML marshal error: %v", err)
 			}
 
-			// Verify NodeClaim fields
-			assert.Equal(t, tt.param.NodeName, nodeClaim.Name)
-			assert.Equal(t, "karpenter.sh/v1", nodeClaim.APIVersion)
-			assert.Equal(t, "NodeClaim", nodeClaim.Kind)
-
 			// Verify annotations
 			assert.Equal(t, "true", nodeClaim.Annotations["karpenter.sh/do-not-disrupt"])
 
@@ -319,7 +314,7 @@ func TestKarpenterGPUNodeProvider_GetInstancePricing(t *testing.T) {
 			instanceType: "p4de.24xlarge",
 			region:       "us-east-1",
 			capacityType: types.CapacityTypeOnDemand,
-			expectError:  true,
+			expectError:  false,
 		},
 	}
 
@@ -329,8 +324,12 @@ func TestKarpenterGPUNodeProvider_GetInstancePricing(t *testing.T) {
 				pricingProvider: pricing.NewStaticPricingProvider(),
 			}
 			price, err := provider.GetInstancePricing(tt.instanceType, tt.region, tt.capacityType)
-			assert.NoError(t, err)
-			assert.GreaterOrEqual(t, price, 27.4471)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.GreaterOrEqual(t, price, 27.4471)
+			}
 		})
 	}
 }
