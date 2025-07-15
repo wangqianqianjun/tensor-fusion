@@ -18,20 +18,21 @@ limitations under the License.
 package pricing
 
 import (
+	"bytes"
+	"context"
 	"encoding/csv"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
+	"log"
 
 	"regexp"
-	"runtime"
 
 	"strconv"
 	"strings"
 
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/types"
-	"sigs.k8s.io/yaml"
+	"github.com/NexusGPU/tensor-fusion/internal/config"
+	"github.com/NexusGPU/tensor-fusion/internal/utils"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 const (
@@ -43,22 +44,8 @@ const (
 var (
 	globalAWSGPUInstanceData   map[string]GPUNodeInstanceInfoAndPrice
 	globalAzureGPUInstanceData map[string]GPUNodeInstanceInfoAndPrice
-	globalGPUModelToFP16TFlops map[string]int32
+	tflopsMap                  map[string]config.GpuInfo
 )
-
-// init initializes the global GPU data when the package is loaded
-func init() {
-	globalAWSGPUInstanceData = make(map[string]GPUNodeInstanceInfoAndPrice)
-	globalAzureGPUInstanceData = make(map[string]GPUNodeInstanceInfoAndPrice)
-	globalGPUModelToFP16TFlops = make(map[string]int32)
-
-	// Load GPU model to FP16TFlops mapping from YAML
-	loadGPUInfoFromYAML("charts/tensor-fusion/templates/gpu-public-gpu-info.yaml")
-
-	// Load AWS and Azure instance data from CSV files
-	loadCSVInstanceData("internal/cloudprovider/pricing/aws_ec2.csv", providerAWS)
-	loadCSVInstanceData("internal/cloudprovider/pricing/az.csv", providerAzure)
-}
 
 // PricingProvider provides pricing information and calculations for instance types
 type PricingProvider interface {
@@ -77,101 +64,71 @@ type GPUNodeInstanceInfoAndPrice struct {
 // Data is now stored in global variables and initialized during package init
 type StaticPricingProvider struct{}
 
-// GPUInfo represents the structure of GPU info from YAML
-type GPUInfo struct {
-	Model         string  `yaml:"model"`
-	FullModelName string  `yaml:"fullModelName"`
-	Vendor        string  `yaml:"vendor"`
-	CostPerHour   float64 `yaml:"costPerHour"`
-	FP16TFlops    int32   `yaml:"fp16TFlops"`
-}
-
 func NewStaticPricingProvider() *StaticPricingProvider {
 	return &StaticPricingProvider{}
 }
 
-// getProjectPath returns the absolute path to a file relative to project root
-func getProjectPath(relativePath string) string {
-	_, filename, _, _ := runtime.Caller(0)
-	currentDir := filepath.Dir(filename)
-
-	// Go up from internal/cloudprovider/pricing to project root
-	projectRoot := filepath.Join(currentDir, "..", "..", "..")
-	return filepath.Join(projectRoot, relativePath)
+// InitializePricingData initializes all pricing data with given paths
+// This function can be called from main to explicitly control initialization
+func InitializePricingData(awsCSVPath, azureCSVPath string, ctx context.Context) {
+	// Initialize maps
+	globalAWSGPUInstanceData = make(map[string]GPUNodeInstanceInfoAndPrice)
+	globalAzureGPUInstanceData = make(map[string]GPUNodeInstanceInfoAndPrice)
+	tflopsMap = make(map[string]config.GpuInfo)
+	startWatchAWSGPUPricingChanges(ctx, awsCSVPath)
+	startWatchAzureGPUPricingChanges(ctx, azureCSVPath)
 }
 
-// loadGPUInfoFromYAML loads GPU model to FP16TFlops mapping from YAML file
-func loadGPUInfoFromYAML(path string) {
-	yamlFile := getProjectPath(path)
-
-	file, err := os.Open(yamlFile)
-	if err != nil {
-		fmt.Printf("Error opening YAML file: %v\n", err)
+func SetTflopsMap(gpuInfos *[]config.GpuInfo) {
+	if gpuInfos == nil {
+		log.Println("gpuInfos is nil")
 		return
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Printf("Error closing YAML file: %v\n", err)
-		}
-	}()
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		fmt.Printf("Error reading YAML file: %v\n", err)
-		return
-	}
-
-	// Parse YAML content, extract data section
-	var configMap map[string]any
-	if err := yaml.Unmarshal(data, &configMap); err != nil {
-		fmt.Printf("Error parsing YAML: %v\n", err)
-		return
-	}
-
-	// Extract gpu-info.yaml content
-	gpuInfoStr, ok := configMap["data"].(map[string]any)["gpu-info.yaml"].(string)
-	if !ok {
-		fmt.Printf("Error extracting gpu-info.yaml from ConfigMap\n")
-		return
-	}
-
-	// Parse GPU info YAML
-	var gpuInfos []GPUInfo
-	if err := yaml.Unmarshal([]byte(gpuInfoStr), &gpuInfos); err != nil {
-		fmt.Printf("Error parsing GPU info YAML: %v\n", err)
-		return
-	}
-
-	// Build mapping from GPU model to FP16TFlops
-	for _, gpu := range gpuInfos {
-		globalGPUModelToFP16TFlops[gpu.Model] = gpu.FP16TFlops
-		// Also add full model name as key for better matching
-		globalGPUModelToFP16TFlops[gpu.FullModelName] = gpu.FP16TFlops
+	for _, gpuInfo := range *gpuInfos {
+		tflopsMap[gpuInfo.Model] = gpuInfo
 	}
 }
 
-// loadCSVInstanceData loads instance data from CSV files (unified for AWS and Azure)
-func loadCSVInstanceData(relativePath, provider string) {
-	csvFile := getProjectPath(relativePath)
-
-	file, err := os.Open(csvFile)
+func startWatchAWSGPUPricingChanges(ctx context.Context, awsCSVPath string) {
+	ch, err := utils.WatchConfigFileChanges(ctx, awsCSVPath)
 	if err != nil {
-		fmt.Printf("Error opening %s CSV file: %v\n", provider, err)
+		ctrl.Log.Error(err, "unable to watch gpuInfo file, "+
+			"file may not exist, this error will cause billing not working", "awsCSVPath", awsCSVPath)
 		return
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Printf("Error closing %s CSV file: %v\n", provider, err)
+	go func() {
+		for data := range ch {
+			loadCSVInstanceDataFromPath(data, providerAWS)
 		}
 	}()
+}
 
-	reader := csv.NewReader(file)
+func startWatchAzureGPUPricingChanges(ctx context.Context, azureCSVPath string) {
+	ch, err := utils.WatchConfigFileChanges(ctx, azureCSVPath)
+	if err != nil {
+		ctrl.Log.Error(err, "unable to watch gpuInfo file, "+
+			"file may not exist, this error will cause billing not working", "azureCSVPath", azureCSVPath)
+		return
+	}
+	go func() {
+		for data := range ch {
+			loadCSVInstanceDataFromPath(data, providerAzure)
+		}
+	}()
+}
+
+// loadCSVInstanceDataFromPath loads instance data from a single CSV file
+func loadCSVInstanceDataFromPath(data []byte, provider string) {
+	reader := csv.NewReader(bytes.NewReader(data))
 	records, err := reader.ReadAll()
 	if err != nil {
 		fmt.Printf("Error reading %s CSV file: %v\n", provider, err)
 		return
 	}
 
+	localAWSGPUInstanceData := make(map[string]GPUNodeInstanceInfoAndPrice)
+	localAzureGPUInstanceData := make(map[string]GPUNodeInstanceInfoAndPrice)
+	processedCount := 0
 	// Parse CSV records (skip header)
 	for i, record := range records {
 		if i == 0 {
@@ -211,11 +168,19 @@ func loadCSVInstanceData(relativePath, provider string) {
 		}
 
 		if provider == providerAWS {
-			globalAWSGPUInstanceData[instanceInfo.InstanceType] = instanceInfoAndPrice
+			localAWSGPUInstanceData[instanceInfo.InstanceType] = instanceInfoAndPrice
 		} else {
-			globalAzureGPUInstanceData[instanceInfo.InstanceType] = instanceInfoAndPrice
+			localAzureGPUInstanceData[instanceInfo.InstanceType] = instanceInfoAndPrice
 		}
+		processedCount++
 	}
+	if provider == providerAWS {
+		globalAWSGPUInstanceData = localAWSGPUInstanceData
+	} else {
+		globalAzureGPUInstanceData = localAzureGPUInstanceData
+	}
+
+	log.Printf("ReLoaded %d %s GPU instances", processedCount, provider)
 }
 
 // parseAWSRecord parses a single AWS CSV record
@@ -238,7 +203,6 @@ func parseAWSRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 		InstanceType:        instanceType,
 		CostPerHour:         parsePrice(onDemandPriceStr),
 		MemoryGiB:           parseMemory(memory),
-		FP16TFlopsPerGPU:    getFP16TFlops(gpuModel),
 		VRAMGigabytesPerGPU: perGPUMemory,
 		GPUModel:            gpuModel,
 		GPUCount:            gpuCount,
@@ -271,8 +235,7 @@ func parseAzureRecord(record []string) (types.GPUNodeInstanceInfo, [3]float64) {
 		InstanceType:        instanceType,
 		CostPerHour:         parsePrice(onDemandPriceStr),
 		MemoryGiB:           parseMemory(memory), // Now Azure has memory info
-		FP16TFlopsPerGPU:    getFP16TFlops(gpuModel),
-		VRAMGigabytesPerGPU: gpuMemoryInt, // Not provided in Azure CSV
+		VRAMGigabytesPerGPU: gpuMemoryInt,        // Not provided in Azure CSV
 		GPUModel:            gpuModel,
 		GPUCount:            gpuCount,
 	}
@@ -365,33 +328,6 @@ func parseAzureGPUSpec(gpuSpec string) (int32, string) {
 	return 0, ""
 }
 
-// getFP16TFlops gets FP16TFlops for a GPU model
-func getFP16TFlops(gpuModel string) int32 {
-	// Direct lookup
-	if tflops, ok := globalGPUModelToFP16TFlops[gpuModel]; ok {
-		return tflops
-	}
-
-	// Try common variations
-	variations := []string{
-		strings.ToUpper(gpuModel),
-		strings.ToLower(gpuModel),
-		strings.ReplaceAll(gpuModel, " ", ""),
-		strings.ReplaceAll(gpuModel, "NVIDIA ", ""),
-		strings.ReplaceAll(gpuModel, "Tesla ", ""),
-		strings.ReplaceAll(gpuModel, "GRID ", ""),
-		strings.ReplaceAll(gpuModel, "AWS ", ""),
-	}
-
-	for _, variation := range variations {
-		if tflops, ok := globalGPUModelToFP16TFlops[variation]; ok {
-			return tflops
-		}
-	}
-	// Default values for common GPUs if not found in YAML
-	return 0
-}
-
 // GetPringcing gets the pricing for the instanceType, capacityType
 func (p *StaticPricingProvider) GetPringcing(instanceType string, capacityType types.CapacityTypeEnum) (float64, bool) {
 	// Check AWS instances first
@@ -427,11 +363,19 @@ func (p *StaticPricingProvider) GetGPUNodeInstanceTypeInfoByInstance(instanceTyp
 
 	// Check AWS instances first
 	if info, exists := globalAWSGPUInstanceData[instanceType]; exists {
+		if tflopsMap != nil {
+			tflops := tflopsMap[info.GPUNodeInstanceInfo.GPUModel]
+			info.GPUNodeInstanceInfo.FP16TFlopsPerGPU = int32(tflops.Fp16TFlops.Value())
+		}
 		results = append(results, info.GPUNodeInstanceInfo)
 	}
 
 	// Check Azure instances
 	if info, exists := globalAzureGPUInstanceData[instanceType]; exists {
+		if tflopsMap != nil {
+			tflops := tflopsMap[info.GPUNodeInstanceInfo.GPUModel]
+			info.GPUNodeInstanceInfo.FP16TFlopsPerGPU = int32(tflops.Fp16TFlops.Value())
+		}
 		results = append(results, info.GPUNodeInstanceInfo)
 	}
 

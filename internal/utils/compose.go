@@ -308,6 +308,15 @@ func AddTFHypervisorConfAfterTemplate(ctx context.Context, spec *v1.PodSpec, poo
 				},
 			},
 		},
+	}, v1.Volume{
+		Name: constants.TensorFusionPricingDataConfigVolumeName,
+		VolumeSource: v1.VolumeSource{
+			ConfigMap: &v1.ConfigMapVolumeSource{
+				LocalObjectReference: v1.LocalObjectReference{
+					Name: constants.TensorFusionPricingDataConfigName,
+				},
+			},
+		},
 	})
 
 	composeHypervisorContainer(spec, pool)
@@ -326,6 +335,10 @@ func composeHypervisorContainer(spec *v1.PodSpec, pool *tfv1.GPUPool) {
 		Name:      constants.TensorFusionGPUInfoConfigVolumeName,
 		MountPath: constants.TensorFusionGPUInfoConfigMountPath,
 		SubPath:   constants.TensorFusionGPUInfoConfigSubPath,
+	}, v1.VolumeMount{
+		Name:      constants.TensorFusionPricingDataConfigVolumeName,
+		MountPath: constants.TensorFusionPricingDataConfigMountPath,
+		ReadOnly:  true,
 	})
 
 	port := getHypervisorPortNumber(pool.Spec.ComponentConfig.Hypervisor)
@@ -339,6 +352,9 @@ func composeHypervisorContainer(spec *v1.PodSpec, pool *tfv1.GPUPool) {
 	}, v1.EnvVar{
 		Name:  constants.TensorFusionGPUInfoEnvVar,
 		Value: constants.TensorFusionGPUInfoConfigMountPath,
+	}, v1.EnvVar{
+		Name:  constants.TensorFusionPricingDataEnvVar,
+		Value: constants.TensorFusionPricingDataConfigMountPath,
 	}, v1.EnvVar{
 		Name:  constants.HypervisorListenAddrEnv,
 		Value: fmt.Sprintf("%s:%d", constants.DefaultHttpBindIP, port),
@@ -459,6 +475,13 @@ func AddTFNodeDiscoveryConfAfterTemplate(ctx context.Context, tmpl *v1.PodTempla
 		MountPath: constants.TensorFusionGPUInfoConfigMountPath,
 		SubPath:   constants.TensorFusionGPUInfoConfigSubPath,
 	})
+
+	tmpl.Spec.Containers[0].VolumeMounts = append(tmpl.Spec.Containers[0].VolumeMounts, v1.VolumeMount{
+		Name:      constants.TensorFusionPricingDataConfigVolumeName,
+		MountPath: constants.TensorFusionPricingDataConfigMountPath,
+		ReadOnly:  true,
+	})
+
 	tmpl.Spec.Volumes = append(tmpl.Spec.Volumes, v1.Volume{
 		Name: constants.TensorFusionGPUInfoConfigVolumeName,
 		VolumeSource: v1.VolumeSource{

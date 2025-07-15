@@ -357,6 +357,10 @@ spec:
                               type: string
                           type: object
                         type: array
+                      gpuNodeAnnotations:
+                        additionalProperties:
+                          type: string
+                        type: object
                       gpuNodeLabels:
                         additionalProperties:
                           type: string

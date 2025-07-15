@@ -301,58 +301,6 @@ func TestKarpenterGPUNodeProvider_GetNodeStatus(t *testing.T) {
 	})
 }
 
-func TestKarpenterGPUNodeProvider_GetInstancePricing(t *testing.T) {
-	tests := []struct {
-		name         string
-		instanceType string
-		region       string
-		capacityType types.CapacityTypeEnum
-		expectError  bool
-	}{
-		{
-			name:         "P4DE 24xlarge",
-			instanceType: "p4de.24xlarge",
-			region:       "us-east-1",
-			capacityType: types.CapacityTypeOnDemand,
-			expectError:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := KarpenterGPUNodeProvider{
-				pricingProvider: pricing.NewStaticPricingProvider(),
-			}
-			price, err := provider.GetInstancePricing(tt.instanceType, tt.region, tt.capacityType)
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.GreaterOrEqual(t, price, 27.4471)
-			}
-		})
-	}
-}
-
-func TestKarpenterGPUNodeProvider_GetGPUNodeInstanceTypeInfo(t *testing.T) {
-	provider := KarpenterGPUNodeProvider{
-		pricingProvider: pricing.NewStaticPricingProvider(),
-	}
-
-	t.Run("valid region", func(t *testing.T) {
-		result := provider.GetGPUNodeInstanceTypeInfo("us-east-1")
-		assert.NotNil(t, result)
-		// Since we don't know the exact implementation, we just check it returns a slice
-	})
-
-	t.Run("invalid region", func(t *testing.T) {
-		result := provider.GetGPUNodeInstanceTypeInfo("invalid-region")
-		assert.NotNil(t, result)
-		// The provider returns all instance types regardless of region
-		assert.GreaterOrEqual(t, len(result), 0)
-	})
-}
-
 func TestKarpenterGPUNodeProvider_parseKarpenterConfig(t *testing.T) {
 	provider := KarpenterGPUNodeProvider{}
 

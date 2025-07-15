@@ -1,13 +1,32 @@
 package pricing
 
 import (
+	"context"
+	_ "embed"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+//go:embed testdata/aws-gpu.csv
+var awsCSV string
+
+//go:embed testdata/azure-gpu.csv
+var azureCSV string
+
+func InitializePricingProvider(t *testing.T) {
+	loadCSVInstanceDataFromPath([]byte(awsCSV), providerAWS)
+	loadCSVInstanceDataFromPath([]byte(azureCSV), providerAzure)
+}
+
 func TestStaticPricingProvider_AWS(t *testing.T) {
+	InitializePricingProvider(t)
 	provider := NewStaticPricingProvider()
 
 	// Test AWS instance pricing - use an instance type with available pricing
@@ -67,6 +86,7 @@ func TestStaticPricingProvider_AWS(t *testing.T) {
 }
 
 func TestStaticPricingProvider_Azure(t *testing.T) {
+	InitializePricingProvider(t)
 	provider := NewStaticPricingProvider()
 
 	// Test Azure instance pricing
@@ -118,6 +138,7 @@ func TestStaticPricingProvider_Azure(t *testing.T) {
 }
 
 func TestParseHelperFunctions(t *testing.T) {
+	InitializePricingProvider(t)
 	// Test parsePrice
 	assert.Equal(t, 21.5, parsePrice("$21.5000 hourly"))
 	assert.Equal(t, 0.0, parsePrice("unavailable"))
@@ -148,6 +169,7 @@ func TestParseHelperFunctions(t *testing.T) {
 }
 
 func TestIsFractionalGPUCount(t *testing.T) {
+	InitializePricingProvider(t)
 	provider := NewStaticPricingProvider()
 	price, found := provider.GetPringcing("NV12ads v710 v5", types.CapacityTypeOnDemand)
 	assert.False(t, found)
@@ -155,6 +177,7 @@ func TestIsFractionalGPUCount(t *testing.T) {
 }
 
 func TestUnavaliableGPUCount(t *testing.T) {
+	InitializePricingProvider(t)
 	provider := NewStaticPricingProvider()
 	price, found := provider.GetPringcing("NG32ads V620 v1", types.CapacityTypeOnDemand)
 	assert.False(t, found)
@@ -162,6 +185,7 @@ func TestUnavaliableGPUCount(t *testing.T) {
 }
 
 func TestAZGPUNodeInstanceInfo(t *testing.T) {
+	InitializePricingProvider(t)
 	provider := NewStaticPricingProvider()
 	ND12s, found := provider.GetGPUNodeInstanceTypeInfoByInstance("ND12s", "eastus")
 	assert.True(t, found)
@@ -174,4 +198,70 @@ func TestAZGPUNodeInstanceInfo(t *testing.T) {
 	assert.Equal(t, int32(8), ND96isr[0].GPUCount)
 	assert.Equal(t, "H200", ND96isr[0].GPUModel)
 	assert.Equal(t, int32(141), ND96isr[0].VRAMGigabytesPerGPU)
+}
+
+func writeAWSCSV(t *testing.T, path string, price float64) {
+	t.Helper()
+	content := fmt.Sprintf(
+		`Name,API Name,Instance Memory,GPUs,GPU model,GPU memory,Arch,Network Performance,On Demand,Linux Reserved cost,Linux Spot Minimum cost,Windows On Demand cost,Windows Reserved cost
+TRN1 32xlarge,trn1.32xlarge,512 GiB,16,AWS Inferentia,512 GiB,x86_64,8x 100 Gigabit,$%.4f hourly,$13.2289 hourly,unavailable,unavailable,unavailable
+`, price)
+	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
+}
+
+func writeAzureCSV(t *testing.T, path string, price float64) {
+	t.Helper()
+	content := fmt.Sprintf(
+		`Name,API Name,Instance Memory,GPUs,Linux On Demand cost,Linux Reserved cost,Linux Spot cost,Windows On Demand cost,Windows Savings Plan,Windows Reserved cost,Windows Spot cost,GPU memory(per gpu)
+Standard ND40rs v2,ND40rs v2,672 GiB,8X V100 (NVlink),$%.4f hourly,$10.7957 hourly,$3.9658 hourly,$23.8720 hourly,$20.1794 hourly,$12.6357 hourly,$4.2970 hourly,32GB
+`, price)
+	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
+}
+
+const (
+	awsInstanceType   = "trn1.32xlarge"
+	azureInstanceType = "ND40rs v2"
+
+	awsPriceInit   = 21.50
+	awsPriceUpdate = 99.99
+
+	azurePriceInit   = 22.0320
+	azurePriceUpdate = 88.88
+)
+
+func TestFileWatcherReloadsPricingData(t *testing.T) {
+	tmp := t.TempDir()
+	awsFile := filepath.Join(tmp, "aws.csv")
+	azureFile := filepath.Join(tmp, "azure.csv")
+
+	writeAWSCSV(t, awsFile, awsPriceInit)
+	writeAzureCSV(t, azureFile, azurePriceInit)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	InitializePricingData(awsFile, azureFile, ctx)
+	provider := NewStaticPricingProvider()
+
+	require.Eventually(t, func() bool {
+		_, ok1 := provider.GetPringcing(awsInstanceType, types.CapacityTypeOnDemand)
+		_, ok2 := provider.GetPringcing(azureInstanceType, types.CapacityTypeOnDemand)
+		return ok1 && ok2
+	}, 3*time.Second, 20*time.Millisecond, "initial pricing data not loaded")
+
+	price, ok := provider.GetPringcing(awsInstanceType, types.CapacityTypeOnDemand)
+	require.True(t, ok)
+	require.Equal(t, awsPriceInit, price)
+
+	price, ok = provider.GetPringcing(azureInstanceType, types.CapacityTypeOnDemand)
+	require.True(t, ok)
+	require.Equal(t, azurePriceInit, price)
+
+	writeAWSCSV(t, awsFile, awsPriceUpdate)
+	writeAzureCSV(t, azureFile, azurePriceUpdate)
+
+	require.Eventually(t, func() bool {
+		p1, ok1 := provider.GetPringcing(awsInstanceType, types.CapacityTypeOnDemand)
+		return ok1 && p1 == awsPriceUpdate
+	}, 30*time.Second, 10*time.Second, "pricing data not updated")
 }

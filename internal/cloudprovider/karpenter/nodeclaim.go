@@ -328,6 +328,8 @@ func (p KarpenterGPUNodeProvider) buildNodeClaim(ctx context.Context, param *typ
 	p.buildCustomTaints(nodeClaim)
 	// build custom termination grace period
 	p.buildTerminationGracePeriod(nodeClaim, *karpenterConfig)
+	// build custom annotations
+	p.buildCustomAnnotations(nodeClaim)
 	return nodeClaim, nil
 }
 
@@ -443,4 +445,14 @@ func (p KarpenterGPUNodeProvider) buildTerminationGracePeriod(nodeClaim *karpv1.
 	nodeClaim.Spec.TerminationGracePeriod = &metav1.Duration{
 		Duration: duration,
 	}
+}
+
+func (p KarpenterGPUNodeProvider) buildCustomAnnotations(nodeClaim *karpv1.NodeClaim) {
+	if p.nodeManagerConfig.NodeProvisioner.GPUAnnotation == nil {
+		return
+	}
+	if nodeClaim.Annotations == nil {
+		nodeClaim.Annotations = make(map[string]string)
+	}
+	maps.Copy(nodeClaim.Annotations, p.nodeManagerConfig.NodeProvisioner.GPUAnnotation)
 }
