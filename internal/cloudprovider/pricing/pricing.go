@@ -19,20 +19,16 @@ package pricing
 
 import (
 	"bytes"
-	"context"
+	_ "embed"
 	"encoding/csv"
 	"fmt"
 	"log"
-
 	"regexp"
-
 	"strconv"
 	"strings"
 
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/types"
 	"github.com/NexusGPU/tensor-fusion/internal/config"
-	"github.com/NexusGPU/tensor-fusion/internal/utils"
-	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 const (
@@ -68,15 +64,19 @@ func NewStaticPricingProvider() *StaticPricingProvider {
 	return &StaticPricingProvider{}
 }
 
-// InitializePricingData initializes all pricing data with given paths
-// This function can be called from main to explicitly control initialization
-func InitializePricingData(awsCSVPath, azureCSVPath string, ctx context.Context) {
+//go:embed pricing-data/aws-gpu.csv
+var awsCSV string
+
+//go:embed pricing-data/azure-gpu.csv
+var azureCSV string
+
+func init() {
 	// Initialize maps
 	globalAWSGPUInstanceData = make(map[string]GPUNodeInstanceInfoAndPrice)
 	globalAzureGPUInstanceData = make(map[string]GPUNodeInstanceInfoAndPrice)
 	tflopsMap = make(map[string]config.GpuInfo)
-	startWatchAWSGPUPricingChanges(ctx, awsCSVPath)
-	startWatchAzureGPUPricingChanges(ctx, azureCSVPath)
+	loadCSVInstanceDataFromPath([]byte(awsCSV), providerAWS)
+	loadCSVInstanceDataFromPath([]byte(azureCSV), providerAzure)
 }
 
 func SetTflopsMap(gpuInfos *[]config.GpuInfo) {
@@ -87,34 +87,6 @@ func SetTflopsMap(gpuInfos *[]config.GpuInfo) {
 	for _, gpuInfo := range *gpuInfos {
 		tflopsMap[gpuInfo.Model] = gpuInfo
 	}
-}
-
-func startWatchAWSGPUPricingChanges(ctx context.Context, awsCSVPath string) {
-	ch, err := utils.WatchConfigFileChanges(ctx, awsCSVPath)
-	if err != nil {
-		ctrl.Log.Error(err, "unable to watch gpuInfo file, "+
-			"file may not exist, this error will cause billing not working", "awsCSVPath", awsCSVPath)
-		return
-	}
-	go func() {
-		for data := range ch {
-			loadCSVInstanceDataFromPath(data, providerAWS)
-		}
-	}()
-}
-
-func startWatchAzureGPUPricingChanges(ctx context.Context, azureCSVPath string) {
-	ch, err := utils.WatchConfigFileChanges(ctx, azureCSVPath)
-	if err != nil {
-		ctrl.Log.Error(err, "unable to watch gpuInfo file, "+
-			"file may not exist, this error will cause billing not working", "azureCSVPath", azureCSVPath)
-		return
-	}
-	go func() {
-		for data := range ch {
-			loadCSVInstanceDataFromPath(data, providerAzure)
-		}
-	}()
 }
 
 // loadCSVInstanceDataFromPath loads instance data from a single CSV file

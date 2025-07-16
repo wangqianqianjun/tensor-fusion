@@ -81,8 +81,6 @@ var secureMetrics bool
 var enableHTTP2 bool
 var tlsOpts []func(*tls.Config)
 var gpuInfoConfig string
-var pricingDataAWSCSVPath string
-var pricingDataAzureCSVPath string
 var metricsPath string
 var nodeLevelPortRange string
 var clusterLevelPortRange string
@@ -115,10 +113,6 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&gpuInfoConfig, "gpu-info-config",
 		"/etc/tensor-fusion/gpu-info.yaml", "specify the path to gpuInfoConfig file")
-	flag.StringVar(&pricingDataAWSCSVPath, "pricing-aws-csv",
-		"/etc/tensor-fusion/pricing-data/aws-ec2.csv", "specify the path to AWS pricing CSV file")
-	flag.StringVar(&pricingDataAzureCSVPath, "pricing-azure-csv",
-		"/etc/tensor-fusion/pricing-data/azure.csv", "specify the path to Azure pricing CSV file")
 	flag.StringVar(&dynamicConfigPath, "dynamic-config",
 		"/etc/tensor-fusion/config.yaml", "specify the path to dynamic config file")
 	flag.StringVar(&schedulerConfigPath, "scheduler-config", "/etc/tensor-fusion/scheduler-config.yaml",
@@ -165,7 +159,6 @@ func main() {
 	startWatchGPUInfoChanges(ctx, &gpuInfos, gpuPricingMap)
 	utils.InitServiceAccountConfig()
 
-	pricing.InitializePricingData(pricingDataAWSCSVPath, pricingDataAzureCSVPath, ctx)
 	metricsServerOptions := metricsserver.Options{
 		BindAddress:   metricsAddr,
 		SecureServing: secureMetrics,

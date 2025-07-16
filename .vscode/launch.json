@@ -15,8 +15,6 @@
             "program": "${workspaceFolder}/cmd/main.go",
             "args": [
                 "--gpu-info-config", "${workspaceFolder}/config/samples/gpu-info-config.yaml",
-                "--pricing-aws-csv", "${workspaceFolder}/charts/tensor-fusion/pricing-data/aws-gpu.csv",
-                "--pricing-azure-csv", "${workspaceFolder}/charts/tensor-fusion/pricing-data/azure-gpu.csv",
                 "--dynamic-config", "${workspaceFolder}/config/samples/dynamic-config.yaml",
                 "--scheduler-config", "${workspaceFolder}/config/samples/scheduler-config.yaml",
                 // "--enable-alert"
@@ -46,8 +44,6 @@
             },
             "args": [
                 "--gpu-info-config", "${workspaceFolder}/config/samples/gpu-info-config.yaml",
-                "--pricing-aws-csv", "${workspaceFolder}/charts/tensor-fusion/pricing-data/aws-gpu.csv",
-                "--pricing-azure-csv", "${workspaceFolder}/charts/tensor-fusion/pricing-data/azure-gpu.csv",
                 "--dynamic-config", "${workspaceFolder}/config/samples/dynamic-config.yaml",
                 "--scheduler-config", "${workspaceFolder}/config/samples/scheduler-config.yaml",
                 "--enable-alert",
@@ -68,8 +64,6 @@
             },
             "args": [
                 "--gpu-info-config", "${workspaceFolder}/config/samples/gpu-info-config.yaml",
-                "--pricing-aws-csv", "${workspaceFolder}/charts/tensor-fusion/pricing-data/aws-gpu.csv",
-                "--pricing-azure-csv", "${workspaceFolder}/charts/tensor-fusion/pricing-data/azure-gpu.csv",
                 "--dynamic-config", "${workspaceFolder}/config/samples/dynamic-config.yaml",
                 "--scheduler-config", "${workspaceFolder}/config/samples/scheduler-config.yaml",
                 "--enable-alert",

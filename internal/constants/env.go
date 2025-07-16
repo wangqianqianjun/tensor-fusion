@@ -26,13 +26,6 @@ const (
 	TensorFusionGPUInfoConfigSubPath    = "gpu-info.yaml"
 	TensorFusionGPUInfoEnvVar           = "TENSOR_FUSION_GPU_INFO_PATH"
 
-	TensorFusionPricingDataConfigName       = "tensor-fusion-sys-pricing-data"
-	TensorFusionPricingDataConfigVolumeName = "pricing-data"
-	TensorFusionPricingDataConfigMountPath  = "/etc/tensor-fusion/pricing-data"
-	TensorFusionPricingDataAWSCSVPath       = "/etc/tensor-fusion/pricing-data/aws-gpu.csv"
-	TensorFusionPricingDataAzureCSVPath     = "/etc/tensor-fusion/pricing-data/azure-gpu.csv"
-	TensorFusionPricingDataEnvVar           = "TENSOR_FUSION_PRICING_DATA_PATH"
-
 	TensorFusionVectorConfigName       = "tensor-fusion-sys-vector-config"
 	TensorFusionVectorConfigVolumeName = "vector-config"
 	TensorFusionVectorConfigMountPath  = "/etc/vector/vector.yaml"
