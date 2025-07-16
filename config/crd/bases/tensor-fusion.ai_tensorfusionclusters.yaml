@@ -119,6 +119,7 @@ spec:
                     - nvidia
                     - tencent
                     - runpod
+                    - karpenter
                     - mock
                     type: string
                 type: object
@@ -425,6 +426,10 @@ spec:
                                         type: string
                                     type: object
                                   type: array
+                                gpuNodeAnnotations:
+                                  additionalProperties:
+                                    type: string
+                                  type: object
                                 gpuNodeLabels:
                                   additionalProperties:
                                     type: string

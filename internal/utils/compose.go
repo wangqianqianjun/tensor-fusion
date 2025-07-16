@@ -514,6 +514,7 @@ func AddTFNodeDiscoveryConfAfterTemplate(ctx context.Context, tmpl *v1.PodTempla
 		MountPath: constants.TensorFusionGPUInfoConfigMountPath,
 		SubPath:   constants.TensorFusionGPUInfoConfigSubPath,
 	})
+
 	tmpl.Spec.Volumes = append(tmpl.Spec.Volumes, v1.Volume{
 		Name: constants.TensorFusionGPUInfoConfigVolumeName,
 		VolumeSource: v1.VolumeSource{

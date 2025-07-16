@@ -1472,6 +1472,13 @@ func (in *NodeProvisioner) DeepCopyInto(out *NodeProvisioner) {
 			(*out)[key] = val
 		}
 	}
+	if in.GPUAnnotation != nil {
+		in, out := &in.GPUAnnotation, &out.GPUAnnotation
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.Budget != nil {
 		in, out := &in.Budget, &out.Budget
 		*out = new(PeriodicalBudget)

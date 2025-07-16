@@ -126,6 +126,8 @@ type NodeProvisioner struct {
 	CPUTaints []Taint `json:"cpuTaints,omitempty"`
 	// +optional
 	CPULabels map[string]string `json:"cpuNodeLabels,omitempty"`
+	// +optional
+	GPUAnnotation map[string]string `json:"gpuNodeAnnotations,omitempty"`
 
 	// +optional
 	// NodeProvisioner will start an virtual billing based on public pricing or customized pricing, if the VM's costs exceeded any budget constraints, the new VM will not be created, and alerts will be generated

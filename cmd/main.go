@@ -48,6 +48,7 @@ import (
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/cmd/sched"
 	"github.com/NexusGPU/tensor-fusion/internal/alert"
+	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/pricing"
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/controller"
@@ -564,6 +565,7 @@ func startWatchGPUInfoChanges(ctx context.Context, gpuInfos *[]config.GpuInfo, g
 			for _, gpuInfo := range updatedGpuInfos {
 				gpuPricingMap[gpuInfo.FullModelName] = gpuInfo.CostPerHour
 			}
+			pricing.SetTflopsMap(&updatedGpuInfos)
 		}
 	}()
 }
