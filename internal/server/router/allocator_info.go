@@ -7,7 +7,9 @@ import (
 
 	"time"
 
+	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
+	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator/filter"
 	"github.com/NexusGPU/tensor-fusion/internal/scheduler/gpuresources"
 	"github.com/gin-gonic/gin"
 	"sigs.k8s.io/yaml"
@@ -102,6 +104,9 @@ func (r *AllocatorInfoRouter) SimulateScheduleOnePod(ctx *gin.Context) {
 	state.SetRecordPluginMetrics(false)
 	podsToActivate := framework.NewPodsToActivate()
 	state.Write(framework.PodsToActivateKey, podsToActivate)
+	state.Write(framework.StateKey(constants.SchedulerSimulationKey), &gpuallocator.SimulateSchedulingFilterDetail{
+		FilterStageDetails: []filter.FilterDetail{},
+	})
 
 	// simulate schedulingCycle non side effect part
 	fwk := r.scheduler.Profiles[pod.Spec.SchedulerName]
@@ -112,10 +117,12 @@ func (r *AllocatorInfoRouter) SimulateScheduleOnePod(ctx *gin.Context) {
 	}
 	scheduleResult, err := r.scheduler.SchedulePod(ctx, fwk, state, pod)
 	gpuCycleState, _ := state.Read(gpuresources.CycleStateGPUSchedulingResult)
+	simulateSchedulingFilterDetail, _ := state.Read(framework.StateKey(constants.SchedulerSimulationKey))
 	if err != nil {
 		if fitError, ok := err.(*framework.FitError); ok {
 			ctx.JSON(http.StatusOK, gin.H{
 				"scheduleResult": scheduleResult,
+				"filterDetail":   simulateSchedulingFilterDetail,
 				"error": gin.H{
 					"numAllNodes": fitError.NumAllNodes,
 					"diagnosis":   fitError.Diagnosis,
@@ -128,6 +135,7 @@ func (r *AllocatorInfoRouter) SimulateScheduleOnePod(ctx *gin.Context) {
 	}
 	ctx.JSON(http.StatusOK, gin.H{
 		"scheduleResult":    scheduleResult,
+		"filterDetail":      simulateSchedulingFilterDetail,
 		"error":             err,
 		"cycleState":        state,
 		"gpuSchedulerState": gpuCycleState,

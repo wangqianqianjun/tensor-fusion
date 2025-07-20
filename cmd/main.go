@@ -45,6 +45,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"sigs.k8s.io/yaml"
+
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/NexusGPU/tensor-fusion/cmd/sched"
 	"github.com/NexusGPU/tensor-fusion/internal/alert"
@@ -62,7 +64,6 @@ import (
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
 	"github.com/NexusGPU/tensor-fusion/internal/version"
 	webhookcorev1 "github.com/NexusGPU/tensor-fusion/internal/webhook/v1"
-	"sigs.k8s.io/yaml"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -90,12 +91,12 @@ var enableAlert bool
 var alertManagerAddr string
 var timeSeriesDB *metrics.TimeSeriesDB
 var dynamicConfigPath string
-var globalConfig config.GlobalConfig
 var alertEvaluator *alert.AlertEvaluator
 var schedulerConfigPath string
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(tfv1.AddToScheme(scheme))
 	utilruntime.Must(tfv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
@@ -186,19 +187,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// global config includes metrics table ttl / alert rules
-	// when changed, handle with different functions
-	if enableAlert || enableAutoScale {
-		// connect TSDB only when any feature depends on it
-		go setupTimeSeriesAndWatchGlobalConfigChanges(ctx, mgr)
-	}
+	setupTimeSeriesAndWatchGlobalConfigChanges(ctx, mgr)
 
 	if autoScaleCanBeEnabled && enableAutoScale {
 		// TODO init auto scale module
 		setupLog.Info("auto scale enabled")
 	}
 
-	metricsRecorder := startMetricsRecorder(enableLeaderElection, mgr, gpuPricingMap, &globalConfig)
+	metricsRecorder := startMetricsRecorder(enableLeaderElection, mgr, gpuPricingMap)
 
 	// Initialize GPU allocator and set up watches
 	allocator, portAllocator := startTensorFusionAllocators(ctx, mgr)
@@ -326,7 +322,7 @@ func startCustomResourceController(
 		Scheme:          mgr.GetScheme(),
 		Recorder:        mgr.GetEventRecorderFor("TensorFusionCluster"),
 		MetricsRecorder: &metricsRecorder,
-	}).SetupWithManager(mgr); err != nil {
+	}).SetupWithManager(mgr, true); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TensorFusionCluster")
 		os.Exit(1)
 	}
@@ -336,7 +332,7 @@ func startCustomResourceController(
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("GPUPool"),
 	}
-	if err = GPUPoolReconciler.SetupWithManager(mgr); err != nil {
+	if err = GPUPoolReconciler.SetupWithManager(mgr, true); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GPUPool")
 		os.Exit(1)
 	}
@@ -345,8 +341,6 @@ func startCustomResourceController(
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("GPUNode"),
-
-		GlobalConfig: &globalConfig,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GPUNode")
 		os.Exit(1)
@@ -418,6 +412,15 @@ func startCustomResourceController(
 		setupLog.Error(err, "unable to create controller", "controller", "GPUResourceQuota")
 		os.Exit(1)
 	}
+
+	if err := (&controller.GPUNodeClaimReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("GPUNodeClaim"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GPUNodeClaim")
+		os.Exit(1)
+	}
 }
 
 func startWebhook(mgr manager.Manager, portAllocator *portallocator.PortAllocator) {
@@ -439,7 +442,7 @@ func startScheduler(
 		return nil
 	}
 	if schedulerConfigPath == "" {
-		setupLog.Error(fmt.Errorf("scheduler config path is empty, please and --scheduler-config in command line"), "")
+		setupLog.Error(nil, "scheduler config path is empty, please and --scheduler-config in command line")
 		os.Exit(1)
 	}
 
@@ -466,41 +469,64 @@ func startScheduler(
 }
 
 func setupTimeSeriesAndWatchGlobalConfigChanges(ctx context.Context, mgr manager.Manager) {
-	// config change will cause a full reloading
-	<-mgr.Elected()
-
-	timeSeriesDB = setupTimeSeriesDB()
-	if timeSeriesDB != nil {
-		if err := timeSeriesDB.SetupTables(mgr.GetClient()); err != nil {
-			setupLog.Error(err, "unable to init timeseries tables")
-		} else {
-			autoScaleCanBeEnabled = true
-			alertCanBeEnabled = true
-
-			setupLog.Info("time series db setup successfully.")
-		}
+	globalConfig := &config.GlobalConfig{}
+	if err := utils.LoadConfigFromFile(dynamicConfigPath, globalConfig); err != nil {
+		setupLog.Error(err, "unable to load global config file", "configPath", dynamicConfigPath)
+		os.Exit(1)
 	}
+	config.SetGlobalConfig(globalConfig)
 
-	alertEvaluator = alert.NewAlertEvaluator(ctx, timeSeriesDB, globalConfig.AlertRules, alertManagerAddr)
+	// only init TSDB and evaluator in leader
+	needTSDB := enableAlert || enableAutoScale
 
+	err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		if !needTSDB {
+			return nil
+		}
+		timeSeriesDB = setupTimeSeriesDB()
+		if timeSeriesDB != nil {
+			if err := timeSeriesDB.SetupTables(mgr.GetClient()); err != nil {
+				setupLog.Error(err, "unable to init timeseries tables")
+			} else {
+				autoScaleCanBeEnabled = true
+				alertCanBeEnabled = true
+
+				setupLog.Info("time series db setup successfully.")
+			}
+		}
+
+		alertEvaluator = alert.NewAlertEvaluator(ctx, timeSeriesDB, config.GetGlobalConfig().AlertRules, alertManagerAddr)
+		return nil
+	}))
+	if err != nil {
+		setupLog.Error(err, "unable to add time series setup to manager")
+		os.Exit(1)
+	}
+	go watchAndHandleConfigChanges(ctx, mgr, needTSDB)
+}
+
+func watchAndHandleConfigChanges(ctx context.Context, mgr manager.Manager, needTSDB bool) {
 	ch, err := utils.WatchConfigFileChanges(ctx, dynamicConfigPath)
 	if err != nil {
 		ctrl.Log.Error(err, "unable to watch global config file, file may not exist",
 			"configPath", dynamicConfigPath)
-		return
+		os.Exit(1)
 	}
 
 	for data := range ch {
 		ctrl.Log.Info("global config file loading")
-		err := yaml.Unmarshal(data, &globalConfig)
+		globalConfig := &config.GlobalConfig{}
+		err := yaml.Unmarshal(data, globalConfig)
 		if err != nil {
 			ctrl.Log.Error(err, "unable to reload global config file, not valid config structure",
 				"configPath", dynamicConfigPath)
 			continue
 		}
+		config.SetGlobalConfig(globalConfig)
 
 		// handle alert rules update
 		go func() {
+			<-mgr.Elected()
 			if alertCanBeEnabled && enableAlert {
 				err = alertEvaluator.UpdateAlertRules(globalConfig.AlertRules)
 				if err != nil {
@@ -510,12 +536,15 @@ func setupTimeSeriesAndWatchGlobalConfigChanges(ctx context.Context, mgr manager
 		}()
 
 		// handle metrics ttl update
-		go func() {
-			err = timeSeriesDB.SetTableTTL(globalConfig.MetricsTTL)
-			if err != nil {
-				ctrl.Log.Error(err, "unable to update metrics ttl", "ttl config", globalConfig.MetricsTTL)
-			}
-		}()
+		if needTSDB {
+			go func() {
+				<-mgr.Elected()
+				err = timeSeriesDB.SetTableTTL(globalConfig.MetricsTTL)
+				if err != nil {
+					ctrl.Log.Error(err, "unable to update metrics ttl", "ttl config", globalConfig.MetricsTTL)
+				}
+			}()
+		}
 	}
 }
 
@@ -523,12 +552,10 @@ func startMetricsRecorder(
 	enableLeaderElection bool,
 	mgr manager.Manager,
 	gpuPricingMap map[string]float64,
-	globalConfig *config.GlobalConfig,
 ) metrics.MetricsRecorder {
 	metricsRecorder := metrics.MetricsRecorder{
 		MetricsOutputPath:  metricsPath,
 		HourlyUnitPriceMap: gpuPricingMap,
-		GlobalConfig:       globalConfig,
 
 		// Worker level map will be updated by cluster reconcile
 		// Key is poolName, second level key is QoS level
@@ -546,9 +573,19 @@ func startMetricsRecorder(
 }
 
 func startWatchGPUInfoChanges(ctx context.Context, gpuInfos *[]config.GpuInfo, gpuPricingMap map[string]float64) {
+	initGpuInfos := make([]config.GpuInfo, 0)
+	err := utils.LoadConfigFromFile(gpuInfoConfig, &initGpuInfos)
+	if err != nil {
+		setupLog.Error(err, "unable to load gpuInfo file, "+
+			"file may not exist, this error will cause billing not working", "gpuInfoConfig", gpuInfoConfig)
+		return
+	}
+	*gpuInfos = initGpuInfos
+	pricing.SetTflopsMapAndInitGPUPricingInfo(ctx, gpuInfos)
+
 	ch, err := utils.WatchConfigFileChanges(ctx, gpuInfoConfig)
 	if err != nil {
-		ctrl.Log.Error(err, "unable to watch gpuInfo file, "+
+		setupLog.Error(err, "unable to watch gpuInfo file, "+
 			"file may not exist, this error will cause billing not working", "gpuInfoConfig", gpuInfoConfig)
 		return
 	}
@@ -558,14 +595,14 @@ func startWatchGPUInfoChanges(ctx context.Context, gpuInfos *[]config.GpuInfo, g
 			updatedGpuInfos := make([]config.GpuInfo, 0)
 			err := yaml.Unmarshal(data, &updatedGpuInfos)
 			if err != nil {
-				ctrl.Log.Error(err, "unable to reload gpuInfo file, file is not valid yaml", "gpuInfoConfig", gpuInfoConfig)
+				setupLog.Error(err, "unable to reload gpuInfo file, file is not valid yaml", "gpuInfoConfig", gpuInfoConfig)
 				continue
 			}
 			*gpuInfos = updatedGpuInfos
 			for _, gpuInfo := range updatedGpuInfos {
 				gpuPricingMap[gpuInfo.FullModelName] = gpuInfo.CostPerHour
 			}
-			pricing.SetTflopsMap(&updatedGpuInfos)
+			pricing.SetTflopsMapAndInitGPUPricingInfo(ctx, gpuInfos)
 		}
 	}()
 }
