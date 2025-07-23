@@ -59,7 +59,7 @@ func TestNewKarpenterGPUNodeProvider(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, provider)
 				assert.Equal(t, tt.cfg, provider.config)
-				assert.Equal(t, tt.client, provider.client)
+				assert.Equal(t, tt.client, provider.karpenterK8sClient)
 			}
 		})
 	}
@@ -83,7 +83,7 @@ func TestKarpenterGPUNodeProvider_TestConnection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := KarpenterGPUNodeProvider{
-				client: tt.client,
+				karpenterK8sClient: tt.client,
 			}
 			err := provider.TestConnection()
 			if tt.expectError {
@@ -139,9 +139,9 @@ func TestKarpenterGPUNodeProvider_CreateNode(t *testing.T) {
 
 	// Create provider
 	provider := KarpenterGPUNodeProvider{
-		client:            fakeClient,
-		nodeManagerConfig: &nodeManagerConfig,
-		pricingProvider:   pricing.NewStaticPricingProvider(),
+		karpenterK8sClient: fakeClient,
+		nodeManagerConfig:  &nodeManagerConfig,
+		pricingProvider:    pricing.NewStaticPricingProvider(),
 	}
 
 	tests := []struct {
@@ -255,7 +255,7 @@ func TestKarpenterGPUNodeProvider_CreateNode(t *testing.T) {
 
 func TestKarpenterGPUNodeProvider_TerminateNode(t *testing.T) {
 	provider := KarpenterGPUNodeProvider{
-		client: nil,
+		karpenterK8sClient: nil,
 	}
 
 	t.Run("nil parameter", func(t *testing.T) {
@@ -278,7 +278,7 @@ func TestKarpenterGPUNodeProvider_TerminateNode(t *testing.T) {
 
 func TestKarpenterGPUNodeProvider_GetNodeStatus(t *testing.T) {
 	provider := KarpenterGPUNodeProvider{
-		client: nil,
+		karpenterK8sClient: nil,
 	}
 
 	t.Run("nil parameter", func(t *testing.T) {

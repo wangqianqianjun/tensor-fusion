@@ -41,11 +41,17 @@ type KarpenterConfig struct {
 }
 
 type KarpenterGPUNodeProvider struct {
-	client            client.Client
-	config            tfv1.ComputingVendorConfig
-	nodeManagerConfig *tfv1.NodeManagerConfig
-	pricingProvider   *pricing.StaticPricingProvider
+	karpenterK8sClient client.Client
+	config             tfv1.ComputingVendorConfig
+	nodeManagerConfig  *tfv1.NodeManagerConfig
+	pricingProvider    *pricing.StaticPricingProvider
 }
+
+var (
+	KarpenterGroup   = "karpenter.sh"
+	KarpenterVersion = "v1"
+	kindNodeClaim    = "NodeClaim"
+)
 
 func NewKarpenterGPUNodeProvider(cfg tfv1.ComputingVendorConfig, client client.Client, nodeManagerConfig tfv1.NodeManagerConfig) (KarpenterGPUNodeProvider, error) {
 	// Validate configuration
@@ -55,23 +61,34 @@ func NewKarpenterGPUNodeProvider(cfg tfv1.ComputingVendorConfig, client client.C
 	if client == nil {
 		return KarpenterGPUNodeProvider{}, fmt.Errorf("kubernetes client cannot be nil")
 	}
+
+	scheme := client.Scheme()
+	// Add Karpenter v1 types manually
+	gv := schema.GroupVersion{Group: KarpenterGroup, Version: KarpenterVersion}
+	if !scheme.Recognizes(gv.WithKind(kindNodeClaim)) {
+		scheme.AddKnownTypes(gv,
+			&karpv1.NodeClaim{}, &karpv1.NodeClaimList{},
+			&karpv1.NodePool{}, &karpv1.NodePoolList{},
+		)
+		metav1.AddToGroupVersion(scheme, gv)
+	}
+
 	pricingProvider := pricing.NewStaticPricingProvider()
-	// Initialize the Karpenter GPU Node Provider with the provided client
 	return KarpenterGPUNodeProvider{
-		client:            client,
-		config:            cfg,
-		nodeManagerConfig: &nodeManagerConfig,
-		pricingProvider:   pricingProvider,
+		karpenterK8sClient: client,
+		config:             cfg,
+		nodeManagerConfig:  &nodeManagerConfig,
+		pricingProvider:    pricingProvider,
 	}, nil
 }
 
 func (p KarpenterGPUNodeProvider) TestConnection() error {
-	if p.client == nil {
+	if p.karpenterK8sClient == nil {
 		return fmt.Errorf("kubernetes client is not initialized")
 	}
 	exist := true
 	// check if NodeClaim CRD exists
-	if err := p.client.List(context.Background(), &karpv1.NodeClaimList{}); err != nil {
+	if err := p.karpenterK8sClient.List(context.Background(), &karpv1.NodeClaimList{}); err != nil {
 		log.Printf("karpenter NodeClaim CRD not found.")
 		exist = false
 	}
@@ -79,7 +96,7 @@ func (p KarpenterGPUNodeProvider) TestConnection() error {
 		return nil
 	}
 	// check if NodePool CRD exists
-	if err := p.client.List(context.Background(), &karpv1.NodePoolList{}); err != nil {
+	if err := p.karpenterK8sClient.List(context.Background(), &karpv1.NodePoolList{}); err != nil {
 		log.Printf("karpenter NodePool CRD not found.")
 		return fmt.Errorf("karpenter CRD not found or not accessible")
 	}
@@ -87,7 +104,7 @@ func (p KarpenterGPUNodeProvider) TestConnection() error {
 }
 
 func (p KarpenterGPUNodeProvider) CreateNode(ctx context.Context, param *types.NodeCreationParam) (*types.GPUNodeStatus, error) {
-	if param == nil || p.client == nil {
+	if param == nil || p.karpenterK8sClient == nil {
 		return nil, fmt.Errorf("NodeCreationParam cannot be nil")
 	}
 	// Build NodeClaim from the creation parameters
@@ -96,7 +113,7 @@ func (p KarpenterGPUNodeProvider) CreateNode(ctx context.Context, param *types.N
 		return nil, fmt.Errorf("failed to build NodeClaim for node %s: %v", param.NodeName, err)
 	}
 	// Create the NodeClaim using the Karpenter client
-	err = p.client.Create(ctx, nodeClaim)
+	err = p.karpenterK8sClient.Create(ctx, nodeClaim)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NodeClaim %s: %v", nodeClaim.Name, err)
 	}
@@ -120,19 +137,19 @@ func (p KarpenterGPUNodeProvider) TerminateNode(ctx context.Context, param *type
 		return fmt.Errorf("terminate NodeClaim failed, NodeIdentityParam cannot be nil")
 	}
 
-	if p.client == nil {
+	if p.karpenterK8sClient == nil {
 		return fmt.Errorf("terminate NodeClaim failed, kubernetes client is not initialized")
 	}
 	// Delete the NodeClaim, Karpenter will handle the node termination
 	nodeClaim := &karpv1.NodeClaim{}
-	err := p.client.Get(ctx, client.ObjectKey{
+	err := p.karpenterK8sClient.Get(ctx, client.ObjectKey{
 		Name: param.InstanceID, // Using instance ID as NodeClaim name
 	}, nodeClaim)
 	if err != nil {
 		return fmt.Errorf("failed to find NodeClaim for instance %s: %v", param.InstanceID, err)
 	}
 
-	err = p.client.Delete(ctx, nodeClaim)
+	err = p.karpenterK8sClient.Delete(ctx, nodeClaim)
 	if err != nil {
 		return fmt.Errorf("failed to delete NodeClaim for instance %s: %v", param.InstanceID, err)
 	}
@@ -146,13 +163,13 @@ func (p KarpenterGPUNodeProvider) GetNodeStatus(ctx context.Context, param *type
 		return nil, fmt.Errorf("NodeIdentityParam cannot be nil")
 	}
 
-	if p.client == nil {
+	if p.karpenterK8sClient == nil {
 		return nil, fmt.Errorf("kubernetes client is not initialized")
 	}
 
 	// Get the NodeClaim status
 	nodeClaim := &karpv1.NodeClaim{}
-	err := p.client.Get(ctx, client.ObjectKey{
+	err := p.karpenterK8sClient.Get(ctx, client.ObjectKey{
 		Name: param.InstanceID,
 	}, nodeClaim)
 	if err != nil {
@@ -168,7 +185,7 @@ func (p KarpenterGPUNodeProvider) GetNodeStatus(ctx context.Context, param *type
 	}
 
 	k8sNode := &corev1.Node{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: param.InstanceID}, k8sNode); err == nil {
+	if err := p.karpenterK8sClient.Get(ctx, client.ObjectKey{Name: param.InstanceID}, k8sNode); err == nil {
 		// Node exists, fill in IP, status, and architecture
 		for _, a := range k8sNode.Status.Addresses {
 			switch a.Type {
@@ -303,7 +320,7 @@ func (p KarpenterGPUNodeProvider) buildNodeClaim(ctx context.Context, param *typ
 	// Create NodeClaim using Karpenter's official type
 	nodeClaim := &karpv1.NodeClaim{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "karpenter.sh/v1",
+			APIVersion: fmt.Sprintf("%s/%s", KarpenterGroup, KarpenterVersion),
 			Kind:       "NodeClaim",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -341,7 +358,7 @@ func (p KarpenterGPUNodeProvider) queryAndBuildNodeClassRef(ctx context.Context,
 	}
 	nodeClass := &unstructured.Unstructured{}
 	nodeClass.SetGroupVersionKind(gvk)
-	err := p.client.Get(ctx, client.ObjectKey{Name: karpenterConfig.NodeClassRef.Name}, nodeClass)
+	err := p.karpenterK8sClient.Get(ctx, client.ObjectKey{Name: karpenterConfig.NodeClassRef.Name}, nodeClass)
 	if err == nil {
 		return &karpv1.NodeClassReference{
 			Group: gvk.Group,
