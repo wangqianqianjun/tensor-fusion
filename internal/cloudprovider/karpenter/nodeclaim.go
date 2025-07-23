@@ -24,6 +24,12 @@ import (
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
+var (
+	KarpenterGroup   = "karpenter.sh"
+	KarpenterVersion = "v1"
+	kindNodeClaim    = "NodeClaim"
+)
+
 // KarpenterExtraConfig holds Karpenter-specific configuration parsed from ExtraParams
 type KarpenterExtraConfig struct {
 	// NodeClaim configuration
@@ -51,6 +57,17 @@ func NewKarpenterGPUNodeProvider(ctx context.Context, cfg tfv1.ComputingVendorCo
 	if client == nil {
 		return KarpenterGPUNodeProvider{}, fmt.Errorf("kubernetes client cannot be nil")
 	}
+	scheme := client.Scheme()
+	// Add Karpenter v1 types manually
+	gv := schema.GroupVersion{Group: KarpenterGroup, Version: KarpenterVersion}
+	if !scheme.Recognizes(gv.WithKind(kindNodeClaim)) {
+		scheme.AddKnownTypes(gv,
+			&karpv1.NodeClaim{}, &karpv1.NodeClaimList{},
+			&karpv1.NodePool{}, &karpv1.NodePoolList{},
+		)
+		metav1.AddToGroupVersion(scheme, gv)
+	}
+
 	pricingProvider := pricing.NewStaticPricingProvider()
 	// Initialize the Karpenter GPU Node Provider with the provided client
 	return KarpenterGPUNodeProvider{
@@ -300,8 +317,8 @@ func (p KarpenterGPUNodeProvider) buildNodeClaim(ctx context.Context, param *tfv
 	// Create NodeClaim using Karpenter's official type
 	nodeClaim := &karpv1.NodeClaim{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "karpenter.sh/v1",
-			Kind:       "NodeClaim",
+			APIVersion: fmt.Sprintf("%s/%s", KarpenterGroup, KarpenterVersion),
+			Kind:       kindNodeClaim,
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: param.NodeName,
