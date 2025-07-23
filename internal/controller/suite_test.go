@@ -26,31 +26,32 @@ import (
 	"testing"
 	"time"
 
-	ctrl "sigs.k8s.io/controller-runtime"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/util/retry"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/envtest"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-
-	corev1 "k8s.io/api/core/v1"
-
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
+	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/pricing"
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/metrics"
 	"github.com/NexusGPU/tensor-fusion/internal/portallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	// +kubebuilder:scaffold:imports
 )
@@ -88,7 +89,10 @@ var _ = BeforeSuite(func() {
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			filepath.Join("..", "..", "test", "crd"),
+		},
 		ErrorIfCRDPathMissing: true,
 
 		// The BinaryAssetsDirectory is only required if you want to run the tests directly
@@ -103,6 +107,12 @@ var _ = BeforeSuite(func() {
 	var err error
 	// cfg is defined in this file globally.
 	cfg, err = testEnv.Start()
+
+	config.SetGlobalConfig(config.MockGlobalConfig())
+
+	// set tflops map for pricing
+	pricing.SetTflopsMapAndInitGPUPricingInfo(ctx, config.MockGpuInfo())
+
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
@@ -110,6 +120,9 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	err = corev1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = tfv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
@@ -139,7 +152,6 @@ var _ = BeforeSuite(func() {
 			"A100": 10,
 		},
 		WorkerUnitPriceMap: make(map[string]map[string]metrics.RawBillingPricing),
-		GlobalConfig:       config.MockGlobalConfig(),
 	}
 
 	allocator = gpuallocator.NewGpuAllocator(ctx, mgr.GetClient(), 150*time.Millisecond)
@@ -157,21 +169,29 @@ var _ = BeforeSuite(func() {
 		Scheme:          mgr.GetScheme(),
 		Recorder:        mgr.GetEventRecorderFor("TensorFusionCluster"),
 		MetricsRecorder: metricsRecorder,
-	}).SetupWithManager(mgr)
+	}).SetupWithManager(mgr, false)
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&GPUPoolReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("GPUPool"),
-	}).SetupWithManager(mgr)
+	}).SetupWithManager(mgr, false)
 	Expect(err).ToNot(HaveOccurred())
 
 	err = (&GPUNodeReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		Recorder:     mgr.GetEventRecorderFor("GPUNode"),
-		GlobalConfig: config.MockGlobalConfig(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("GPUNode"),
+	}).SetupWithManager(mgr)
+	Expect(err).ToNot(HaveOccurred())
+
+	SetTestModeCompactionPeriod()
+	err = (&GPUPoolCompactionReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("GPUPoolCompaction"),
+		Allocator: allocator,
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -229,6 +249,18 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(mgr)
 	Expect(err).ToNot(HaveOccurred())
 
+	err = (&FakeNodeClaimReconciler{
+		client: mgr.GetClient(),
+	}).SetupWithManager(mgr)
+	Expect(err).ToNot(HaveOccurred())
+
+	err = (&GPUNodeClaimReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("GPUNodeClaim"),
+	}).SetupWithManager(mgr)
+	Expect(err).ToNot(HaveOccurred())
+
 	go func() {
 		defer GinkgoRecover()
 		err = mgr.Start(ctx)
@@ -247,9 +279,10 @@ var _ = AfterSuite(func() {
 })
 
 type TensorFusionEnv struct {
-	clusterKey  client.ObjectKey
-	poolCount   int
-	poolNodeMap map[int]map[int]int
+	clusterKey        client.ObjectKey
+	poolCount         int
+	poolNodeMap       map[int]map[int]int
+	provisionerConfig *tfv1.ComputingVendorConfig
 }
 
 func (c *TensorFusionEnv) GetCluster() *tfv1.TensorFusionCluster {
@@ -274,6 +307,7 @@ func (c *TensorFusionEnv) UpdateCluster(tfc *tfv1.TensorFusionCluster) {
 
 func (c *TensorFusionEnv) Cleanup() {
 	GinkgoHelper()
+	ProvisioningToggle = false
 	for poolIndex, nodeGpuMap := range c.poolNodeMap {
 		for nodeIndex := range nodeGpuMap {
 			c.DeleteGPUNode(poolIndex, nodeIndex)
@@ -392,10 +426,9 @@ func (c *TensorFusionEnv) GetPoolGpuList(poolIndex int) *tfv1.GPUList {
 // https://book.kubebuilder.io/reference/envtest#testing-considerations
 // Unless you’re using an existing cluster, keep in mind that no built-in controllers are running in the test context.
 // So the checkStatusAndUpdateVirtualCapacity in gpunode_controller.go checking pod status always pending and the gpunode status can't change to running
-// When using an existing cluster, the test speed go a lot faster, may change later?
-func (c *TensorFusionEnv) UpdateHypervisorStatus() {
+func (c *TensorFusionEnv) UpdateHypervisorStatus(checkNodeNum bool) {
 	GinkgoHelper()
-	if os.Getenv("USE_EXISTING_CLUSTER") != "true" {
+	if os.Getenv("USE_EXISTING_CLUSTER") != constants.TrueStringValue {
 		for poolIndex := range c.poolNodeMap {
 			podList := &corev1.PodList{}
 			Eventually(func(g Gomega) {
@@ -405,13 +438,69 @@ func (c *TensorFusionEnv) UpdateHypervisorStatus() {
 						fmt.Sprintf(constants.GPUNodePoolIdentifierLabelFormat, c.getPoolName(poolIndex)): "true",
 					}),
 				)).Should(Succeed())
-				g.Expect(podList.Items).Should(HaveLen(len(c.poolNodeMap[poolIndex])))
+				if checkNodeNum {
+					g.Expect(podList.Items).Should(HaveLen(len(c.poolNodeMap[poolIndex])))
+				}
 			}).Should(Succeed())
 			for _, pod := range podList.Items {
 				pod.Status.Phase = corev1.PodRunning
 				pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue})
 				Expect(k8sClient.Status().Update(ctx, &pod)).Should(Succeed())
 			}
+		}
+	}
+}
+
+func (c *TensorFusionEnv) AddMockGPU4ProvisionedNodes(gpuNodeClaimList *tfv1.GPUNodeClaimList, gpuNodes *tfv1.GPUNodeList) {
+	GinkgoHelper()
+	claimToGPUNodeMap := make(map[string]*tfv1.GPUNode)
+	for _, gpuNode := range gpuNodes.Items {
+		claimToGPUNodeMap[gpuNode.Labels[constants.ProvisionerLabelKey]] = &gpuNode
+	}
+	for _, gpuNodeClaim := range gpuNodeClaimList.Items {
+		if gpuNodeClaim.Status.Phase == tfv1.GPUNodeClaimBound {
+			continue
+		}
+		gpuNode := claimToGPUNodeMap[gpuNodeClaim.Name]
+		if gpuNode == nil {
+			continue
+		}
+		gpu := &tfv1.GPU{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gpu-" + gpuNodeClaim.Name,
+				Labels: map[string]string{
+					constants.LabelKeyOwner: gpuNode.Name,
+				},
+			},
+		}
+		_ = controllerutil.SetControllerReference(gpuNode, gpu, scheme.Scheme)
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: gpu.Name}, &tfv1.GPU{})
+		if errors.IsNotFound(err) {
+			Expect(k8sClient.Create(ctx, gpu)).Should(Succeed())
+
+			err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+				latest := &tfv1.GPU{}
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(gpu), latest); err != nil {
+					return err
+				}
+				latest.Status = tfv1.GPUStatus{
+					GPUModel: "mocked",
+					Capacity: &tfv1.Resource{
+						Tflops: gpuNodeClaim.Spec.TFlopsOffered,
+						Vram:   gpuNodeClaim.Spec.VRAMOffered,
+					},
+					Available: &tfv1.Resource{
+						Tflops: gpuNodeClaim.Spec.TFlopsOffered,
+						Vram:   gpuNodeClaim.Spec.VRAMOffered,
+					},
+					Phase: tfv1.TensorFusionGPUPhaseRunning,
+					NodeSelector: map[string]string{
+						constants.KubernetesHostNameLabel: gpuNode.Name,
+					},
+				}
+				return k8sClient.Status().Update(ctx, latest)
+			})
+			Expect(err).Should(Succeed())
 		}
 	}
 }
@@ -470,10 +559,18 @@ func (b *TensorFusionEnvBuilder) SetGpuCountForNode(nodeIndex int, gpuCount int)
 	return b
 }
 
+func (b *TensorFusionEnvBuilder) SetProvisioningMode(provisionerConfig *tfv1.ComputingVendorConfig) *TensorFusionEnvBuilder {
+	b.provisionerConfig = provisionerConfig
+	return b
+}
+
 var testEnvId int = 0
 
 func (b *TensorFusionEnvBuilder) Build() *TensorFusionEnv {
 	GinkgoHelper()
+	ProvisioningToggle = true
+	GenerateKarpenterEC2NodeClass()
+
 	b.clusterKey = client.ObjectKey{
 		Name:      fmt.Sprintf("cluster-%d", testEnvId),
 		Namespace: "default",
@@ -506,6 +603,57 @@ func (b *TensorFusionEnvBuilder) Build() *TensorFusionEnv {
 			Name:         fmt.Sprintf("pool-%d", i),
 			SpecTemplate: *poolSpec,
 		}
+
+		if b.provisionerConfig != nil {
+			if b.provisionerConfig.Type == tfv1.ComputingVendorKarpenter {
+				gpuPools[i].SpecTemplate.NodeManagerConfig.ProvisioningMode = tfv1.ProvisioningModeKarpenter
+				gpuPools[i].SpecTemplate.NodeManagerConfig.NodeProvisioner = &tfv1.NodeProvisioner{
+					KarpenterNodeClassRef: &tfv1.GroupKindName{
+						Group:   "karpenter.k8s.aws",
+						Kind:    "EC2NodeClass",
+						Name:    "test-ec2-node-class",
+						Version: "v1",
+					},
+					GPURequirements: []tfv1.Requirement{
+						{
+							Key:      tfv1.NodeRequirementKeyInstanceType,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"g6.xlarge"},
+						},
+					},
+					GPULabels: map[string]string{
+						"mock-label":                            "true",
+						fmt.Sprintf("%s-label-%d", tfc.Name, i): "true",
+					},
+					GPUAnnotation: map[string]string{
+						"mock-annotation": "true",
+					},
+				}
+			} else {
+				gpuPools[i].SpecTemplate.NodeManagerConfig.ProvisioningMode = tfv1.ProvisioningModeProvisioned
+				gpuPools[i].SpecTemplate.NodeManagerConfig.NodeProvisioner = &tfv1.NodeProvisioner{
+					NodeClass: "test-node-class",
+					GPURequirements: []tfv1.Requirement{
+						{
+							Key:      tfv1.NodeRequirementKeyInstanceType,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"g6.xlarge"},
+						},
+					},
+					GPULabels: map[string]string{
+						"mock-label": "true",
+					},
+					GPUAnnotation: map[string]string{
+						"mock-annotation": "true",
+					},
+				}
+			}
+		}
+	}
+
+	// set provisioner config
+	if b.provisionerConfig != nil {
+		tfc.Spec.ComputingVendor = b.provisionerConfig
 	}
 
 	tfc.Spec.GPUPools = gpuPools
@@ -579,8 +727,53 @@ func (b *TensorFusionEnvBuilder) Build() *TensorFusionEnv {
 
 		b.GetPoolGpuList(poolIndex)
 	}
-
-	b.UpdateHypervisorStatus()
+	b.UpdateHypervisorStatus(true)
 
 	return b.TensorFusionEnv
+}
+
+func GenerateKarpenterEC2NodeClass() {
+	ec2 := &unstructured.Unstructured{}
+
+	// Inject an EC2NodeClass
+	ec2.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "karpenter.k8s.aws",
+		Version: "v1",
+		Kind:    "EC2NodeClass",
+	})
+	ec2.SetName("test-ec2-node-class")
+
+	ec2.Object["spec"] = map[string]any{
+		// Required
+		"role":      "arn:aws:iam::123456789012:role/dummy",
+		"amiFamily": "AL2023",
+
+		// subnetSelectorTerms – at least 1 element
+		"subnetSelectorTerms": []any{
+			map[string]any{
+				"tags": map[string]any{
+					"kubernetes.io/cluster/test": "owned",
+				},
+			},
+		},
+
+		// securityGroupSelectorTerms – at least 1 element
+		"securityGroupSelectorTerms": []any{
+			map[string]any{
+				"tags": map[string]any{
+					"karpenter.sh/discovery": "dummy",
+				},
+			},
+		},
+
+		// amiSelectorTerms – newly added and required in v1; provide a dummy AMI ID
+		"amiSelectorTerms": []any{
+			map[string]any{
+				"id": "ami-0123456789abcdef0",
+			},
+		},
+	}
+	// May already exist, try to delete first before creating (for test repeatability)
+	_ = k8sClient.Delete(ctx, ec2)
+	Expect(k8sClient.Create(ctx, ec2)).To(Succeed())
 }

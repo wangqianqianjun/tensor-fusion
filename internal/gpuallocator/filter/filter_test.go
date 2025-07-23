@@ -120,7 +120,7 @@ func TestFilters(t *testing.T) {
 			}))
 
 		// Apply filters
-		result, err := registry.Apply(ctx, testPodKey, gpus)
+		result, _, err := registry.Apply(ctx, testPodKey, gpus, false)
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "gpu-1", result[0].Name)
@@ -139,12 +139,12 @@ func TestFilters(t *testing.T) {
 			}))
 
 		// Apply base registry filters
-		baseResult, err := baseRegistry.Apply(ctx, testPodKey, gpus)
+		baseResult, _, err := baseRegistry.Apply(ctx, testPodKey, gpus, false)
 		assert.NoError(t, err)
 		assert.Len(t, baseResult, 3) // Only phase filter applied
 
 		// Apply extended registry filters
-		extendedResult, err := extendedRegistry.Apply(ctx, testPodKey, gpus)
+		extendedResult, _, err := extendedRegistry.Apply(ctx, testPodKey, gpus, false)
 		assert.NoError(t, err)
 		assert.Len(t, extendedResult, 1) // Phase and model filters applied
 	})
@@ -176,6 +176,9 @@ func TestSameNodeFilter(t *testing.T) {
 					Tflops: resource.MustParse("10"),
 					Vram:   resource.MustParse("40Gi"),
 				},
+				NodeSelector: map[string]string{
+					constants.KubernetesHostNameLabel: "node-1",
+				},
 			},
 		},
 		{
@@ -190,6 +193,9 @@ func TestSameNodeFilter(t *testing.T) {
 				Available: &tfv1.Resource{
 					Tflops: resource.MustParse("10"),
 					Vram:   resource.MustParse("40Gi"),
+				},
+				NodeSelector: map[string]string{
+					constants.KubernetesHostNameLabel: "node-1",
 				},
 			},
 		},
@@ -206,6 +212,9 @@ func TestSameNodeFilter(t *testing.T) {
 					Tflops: resource.MustParse("10"),
 					Vram:   resource.MustParse("40Gi"),
 				},
+				NodeSelector: map[string]string{
+					constants.KubernetesHostNameLabel: "node-2",
+				},
 			},
 		},
 		{
@@ -221,6 +230,9 @@ func TestSameNodeFilter(t *testing.T) {
 					Tflops: resource.MustParse("10"),
 					Vram:   resource.MustParse("40Gi"),
 				},
+				NodeSelector: map[string]string{
+					constants.KubernetesHostNameLabel: "node-2",
+				},
 			},
 		},
 		{
@@ -235,6 +247,9 @@ func TestSameNodeFilter(t *testing.T) {
 				Available: &tfv1.Resource{
 					Tflops: resource.MustParse("10"),
 					Vram:   resource.MustParse("40Gi"),
+				},
+				NodeSelector: map[string]string{
+					constants.KubernetesHostNameLabel: "node-3",
 				},
 			},
 		},
@@ -264,6 +279,9 @@ func TestSameNodeFilter(t *testing.T) {
 				Available: &tfv1.Resource{
 					Tflops: resource.MustParse("10"),
 					Vram:   resource.MustParse("40Gi"),
+				},
+				NodeSelector: map[string]string{
+					"test-label": "value",
 				},
 			},
 		},

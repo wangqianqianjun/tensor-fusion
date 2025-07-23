@@ -119,6 +119,7 @@ spec:
                     - nvidia
                     - tencent
                     - runpod
+                    - karpenter
                     - mock
                     type: string
                 type: object
@@ -387,7 +388,7 @@ spec:
                                         - topology.kubernetes.io/region
                                         - topology.kubernetes.io/zone
                                         - karpenter.sh/capacity-type
-                                        - tensor-fusion.ai/gpu-arch
+                                        - tensor-fusion.ai/gpu-vendor
                                         - tensor-fusion.ai/gpu-instance-family
                                         - tensor-fusion.ai/gpu-instance-size
                                         type: string
@@ -425,6 +426,10 @@ spec:
                                         type: string
                                     type: object
                                   type: array
+                                gpuNodeAnnotations:
+                                  additionalProperties:
+                                    type: string
+                                  type: object
                                 gpuNodeLabels:
                                   additionalProperties:
                                     type: string
@@ -440,7 +445,7 @@ spec:
                                         - topology.kubernetes.io/region
                                         - topology.kubernetes.io/zone
                                         - karpenter.sh/capacity-type
-                                        - tensor-fusion.ai/gpu-arch
+                                        - tensor-fusion.ai/gpu-vendor
                                         - tensor-fusion.ai/gpu-instance-family
                                         - tensor-fusion.ai/gpu-instance-size
                                         type: string
@@ -478,7 +483,25 @@ spec:
                                         type: string
                                     type: object
                                   type: array
+                                karpenterNodeClassRef:
+                                  description: Karpenter NodeClass name
+                                  properties:
+                                    group:
+                                      type: string
+                                    kind:
+                                      type: string
+                                    name:
+                                      type: string
+                                    version:
+                                      type: string
+                                  required:
+                                  - group
+                                  - kind
+                                  - name
+                                  - version
+                                  type: object
                                 nodeClass:
+                                  description: TensorFusion GPUNodeClass name
                                   type: string
                               type: object
                             nodeSelector:

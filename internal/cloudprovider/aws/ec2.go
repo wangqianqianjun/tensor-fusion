@@ -7,23 +7,33 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
+	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/pricing"
 	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/types"
 )
 
 type AWSGPUNodeProvider struct {
-	ec2Client *ec2.Client
+	ec2Client       *ec2.Client
+	pricingProvider *pricing.StaticPricingProvider
+	nodeClass       *tfv1.GPUNodeClass
+	ctx             context.Context
 }
 
-func NewAWSGPUNodeProvider(cfg tfv1.ComputingVendorConfig) (AWSGPUNodeProvider, error) {
+func NewAWSGPUNodeProvider(ctx context.Context, cfg tfv1.ComputingVendorConfig, nodeClass *tfv1.GPUNodeClass) (AWSGPUNodeProvider, error) {
 	// TODO only support IAM role at first, need to assume role if role set with custom role
 	awsCfg := aws.Config{
 		Region: cfg.Params.DefaultRegion,
 	}
 	ec2Client := ec2.NewFromConfig(awsCfg)
+	pricingProvider := pricing.NewStaticPricingProvider()
+
 	provider := AWSGPUNodeProvider{
-		ec2Client: ec2Client,
+		ec2Client:       ec2Client,
+		pricingProvider: pricingProvider,
+		nodeClass:       nodeClass,
+		ctx:             ctx,
 	}
 	return provider, nil
 }
@@ -33,13 +43,13 @@ func (p AWSGPUNodeProvider) TestConnection() error {
 	return err
 }
 
-func (p AWSGPUNodeProvider) CreateNode(ctx context.Context, param *types.NodeCreationParam) (*types.GPUNodeStatus, error) {
+func (p AWSGPUNodeProvider) CreateNode(ctx context.Context, param *tfv1.GPUNodeClaim) (*types.GPUNodeStatus, error) {
 	awsTags := []ec2Types.Tag{
 		{Key: aws.String("managed-by"), Value: aws.String("tensor-fusion.ai")},
-		{Key: aws.String("tensor-fusion.ai/node-name"), Value: aws.String(param.NodeName)},
-		{Key: aws.String("tensor-fusion.ai/node-class"), Value: aws.String(param.NodeClass.Name)},
+		{Key: aws.String("tensor-fusion.ai/node-name"), Value: aws.String(param.Spec.NodeName)},
+		{Key: aws.String("tensor-fusion.ai/node-class"), Value: aws.String(p.nodeClass.Name)},
 	}
-	nodeClass := param.NodeClass.Spec
+	nodeClass := p.nodeClass.Spec
 
 	for k, v := range nodeClass.Tags {
 		awsTags = append(awsTags, ec2Types.Tag{
@@ -57,7 +67,7 @@ func (p AWSGPUNodeProvider) CreateNode(ctx context.Context, param *types.NodeCre
 
 	input := &ec2.RunInstancesInput{
 		ImageId:      &nodeClass.OSImageSelectorTerms[0].ID,
-		InstanceType: ec2Types.InstanceType(param.InstanceType),
+		InstanceType: ec2Types.InstanceType(param.Spec.InstanceType),
 		MinCount:     aws.Int32(1),
 		MaxCount:     aws.Int32(1),
 		TagSpecifications: []ec2Types.TagSpecification{
@@ -111,12 +121,18 @@ func (p AWSGPUNodeProvider) GetNodeStatus(ctx context.Context, param *types.Node
 	return status, nil
 }
 
-func (p AWSGPUNodeProvider) GetInstancePricing(instanceType string, region string, capacityType types.CapacityTypeEnum) (float64, error) {
-	// TODO: implement
+func (p AWSGPUNodeProvider) GetInstancePricing(instanceType string, capacityType tfv1.CapacityTypeEnum, region string) (float64, error) {
+	if price, exists := p.pricingProvider.GetPricing(instanceType, capacityType, region); exists {
+		return price, nil
+	}
 	return 0, nil
 }
 
 func (p AWSGPUNodeProvider) GetGPUNodeInstanceTypeInfo(region string) []types.GPUNodeInstanceInfo {
-	// TODO: implement
-	return nil
+	instanceTypes, exists := p.pricingProvider.GetRegionalGPUNodeInstanceTypes(region)
+	if !exists {
+		log.FromContext(p.ctx).Error(nil, "no instance type info found for region", "region", region)
+		return []types.GPUNodeInstanceInfo{}
+	}
+	return instanceTypes
 }

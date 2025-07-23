@@ -167,7 +167,7 @@ func main() {
 		availableVRAM.Add(gpu.Status.Available.Vram)
 	}
 
-	ns := nodeStatus(k8sNodeName)
+	ns := nodeStatus()
 	ns.TotalTFlops = totalTFlops
 	ns.TotalVRAM = totalVRAM
 	ns.AvailableTFlops = availableTFlops
@@ -218,7 +218,7 @@ func createOrUpdateTensorFusionGPU(
 				constants.LabelKeyOwner: gpunode.Name,
 			}
 			gpu.Annotations = map[string]string{
-				constants.GPULastReportTimeAnnotationKey: time.Now().Format(time.RFC3339),
+				constants.LastSyncTimeAnnotationKey: time.Now().Format(time.RFC3339),
 			}
 
 			if !metav1.IsControlledBy(gpu, gpunode) {
@@ -282,10 +282,9 @@ func createOrUpdateTensorFusionGPU(
 	return gpu
 }
 
-func nodeStatus(k8sNodeName string) *tfv1.GPUNodeStatus {
+func nodeStatus() *tfv1.GPUNodeStatus {
 	return &tfv1.GPUNodeStatus{
-		KubernetesNodeName: k8sNodeName,
-		Phase:              tfv1.TensorFusionGPUNodePhaseRunning,
+		Phase: tfv1.TensorFusionGPUNodePhaseRunning,
 	}
 }
 

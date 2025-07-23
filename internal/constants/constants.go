@@ -47,9 +47,9 @@ const (
 	TensorFusionEnabledLabelKey = Domain + "/enabled"
 	InitialGPUNodeSelector      = "nvidia.com/gpu.present=true"
 
-	GPULastReportTimeAnnotationKey = Domain + "/last-sync"
-	WorkloadKey                    = Domain + "/workload"
-	GpuPoolKey                     = Domain + "/gpupool"
+	LastSyncTimeAnnotationKey = Domain + "/last-sync"
+	WorkloadKey               = Domain + "/workload"
+	GpuPoolKey                = Domain + "/gpupool"
 
 	// Annotation key constants
 	GpuCountAnnotation             = Domain + "/gpu-count"
@@ -69,6 +69,7 @@ const (
 	// GPU ID list is assigned by scheduler, should not specified by user
 	GPUDeviceIDsAnnotation            = Domain + "/gpu-ids"
 	SetPendingOwnedWorkloadAnnotation = Domain + "/pending-owned-workload"
+	PricingAnnotation                 = Domain + "/hourly-pricing"
 
 	// Annotations for killer switch: disable features
 	// ['gpu-opt', 'mem-manager', 'gpu-limiter']
@@ -156,6 +157,7 @@ const (
 // To match GPUNode with K8S node, when creating from cloud vendor, must set a label from cloud-init userdata
 const (
 	ProvisionerLabelKey        = Domain + "/node-provisioner"
+	ProvisionerMissingLabel    = Domain + "/orphan"
 	ProvisionerNamePlaceholder = "__GPU_NODE_RESOURCE_NAME__"
 )
 
@@ -170,6 +172,7 @@ const (
 )
 
 const ShortUUIDAlphabet = "123456789abcdefghijkmnopqrstuvwxy"
+const SpotInstanceAssumedDiscountRatio = 0.3
 
 const (
 	LowFrequencyObjFailureInitialDelay        = 300 * time.Millisecond
@@ -183,3 +186,5 @@ const GiBToBytes = 1024 * 1024 * 1024
 
 const AuthorizationHeader = "Authorization"
 const ExtraVerificationInfoPodIDKey = "authentication.kubernetes.io/pod-uid"
+
+const SchedulerSimulationKey = "simulate-schedule"
