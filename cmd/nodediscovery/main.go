@@ -246,33 +246,26 @@ func createOrUpdateTensorFusionGPU(
 		os.Exit(1)
 	}
 
-	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+	err = retry.OnError(retry.DefaultBackoff, func(err error) bool {
+		return true
+	}, func() error {
 		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(gpu), gpu); err != nil {
+			ctrl.Log.Error(err, "failed to get GPU", "gpu", gpu)
 			return err
 		}
-
-		newStatus := tfv1.GPUStatus{
-			Phase: tfv1.TensorFusionGPUPhaseRunning,
-			Capacity: &tfv1.Resource{
-				Vram:   resource.MustParse(fmt.Sprintf("%dKi", memInfo.Total/1024)),
-				Tflops: tflops,
-			},
-			UsedBy:   tfv1.UsedByTensorFusion,
-			UUID:     uuid,
-			GPUModel: deviceName,
-			NodeSelector: map[string]string{
-				constants.KubernetesHostNameLabel: k8sNodeName,
-			},
-			RunningApps: []*tfv1.RunningAppDetail{},
+		gpu.Status.Capacity = &tfv1.Resource{
+			Vram:   resource.MustParse(fmt.Sprintf("%dMi", memInfo.Total/1024/1024)),
+			Tflops: tflops,
 		}
-
+		gpu.Status.UUID = uuid
+		gpu.Status.GPUModel = deviceName
+		gpu.Status.NodeSelector = map[string]string{
+			constants.KubernetesHostNameLabel: k8sNodeName,
+		}
 		if gpu.Status.Available == nil {
-			newStatus.Available = newStatus.Capacity
-		} else {
-			newStatus.Available = gpu.Status.Available
+			gpu.Status.Available = gpu.Status.Capacity.DeepCopy()
 		}
-		gpu.Status = newStatus
-		return k8sClient.Status().Update(ctx, gpu)
+		return k8sClient.Status().Patch(ctx, gpu, client.Merge)
 	})
 	if err != nil {
 		ctrl.Log.Error(err, "failed to update status of GPU after retries", "gpu", gpu)
