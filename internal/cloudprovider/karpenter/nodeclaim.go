@@ -25,9 +25,10 @@ import (
 )
 
 var (
-	KarpenterGroup   = "karpenter.sh"
-	KarpenterVersion = "v1"
-	kindNodeClaim    = "NodeClaim"
+	KarpenterGroup         = "karpenter.sh"
+	KarpenterVersion       = "v1"
+	kindNodeClaim          = "NodeClaim"
+	DefaultGPUResourceName = "nvidia.com/gpu"
 )
 
 // KarpenterExtraConfig holds Karpenter-specific configuration parsed from ExtraParams
@@ -83,20 +84,12 @@ func (p KarpenterGPUNodeProvider) TestConnection() error {
 	if p.client == nil {
 		return fmt.Errorf("kubernetes client is not initialized")
 	}
-	exist := true
 	// check if NodeClaim CRD exists
 	if err := p.client.List(context.Background(), &karpv1.NodeClaimList{}); err != nil {
 		log.FromContext(p.ctx).Error(err, "karpenter NodeClaim CRD not found.")
-		exist = false
+		return fmt.Errorf("karpenter nodeclaim CRD not found or not accessible")
 	}
-	if exist {
-		return nil
-	}
-	// check if NodePool CRD exists
-	if err := p.client.List(context.Background(), &karpv1.NodePoolList{}); err != nil {
-		log.FromContext(p.ctx).Error(err, "karpenter NodePool CRD not found.")
-		return fmt.Errorf("karpenter CRD not found or not accessible")
-	}
+	log.FromContext(p.ctx).Info("Test connection to Karpenter nodeclaim succeeded.")
 	return nil
 }
 
@@ -224,7 +217,9 @@ func (p KarpenterGPUNodeProvider) GetGPUNodeInstanceTypeInfo(region string) []ty
 
 // parseKarpenterConfig extracts Karpenter-specific configuration from ExtraParams
 func (p KarpenterGPUNodeProvider) parseKarpenterConfig(param *tfv1.GPUNodeClaimSpec) *KarpenterExtraConfig {
-	karpenterConfig := &KarpenterExtraConfig{}
+	karpenterConfig := &KarpenterExtraConfig{
+		GPUResourceName: corev1.ResourceName(DefaultGPUResourceName),
+	}
 	extraParams := param.ExtraParams
 	if extraParams == nil {
 		return karpenterConfig
@@ -261,7 +256,7 @@ func (p KarpenterGPUNodeProvider) parseKarpenterConfig(param *tfv1.GPUNodeClaimS
 	}
 
 	if karpenterConfig.GPUResourceName == "" {
-		karpenterConfig.GPUResourceName = "nvidia.com/gpu"
+		karpenterConfig.GPUResourceName = corev1.ResourceName(DefaultGPUResourceName)
 	}
 
 	return karpenterConfig
@@ -375,44 +370,57 @@ func (p KarpenterGPUNodeProvider) queryAndBuildNodeClassRef(ctx context.Context,
 func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim, param *tfv1.GPUNodeClaimSpec) {
 	// Build node selector requirements using Karpenter's NodeSelectorRequirement
 	requirements := []karpv1.NodeSelectorRequirementWithMinValues{}
+	seen := make(map[string]struct{})
 	// 1. instance type
 	if param.InstanceType != "" {
+		key := string(tfv1.NodeRequirementKeyInstanceType)
 		requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
 			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-				Key:      string(tfv1.NodeRequirementKeyInstanceType),
+				Key:      key,
 				Operator: corev1.NodeSelectorOpIn,
 				Values:   []string{param.InstanceType},
 			},
 		})
+		seen[key] = struct{}{}
+
 	}
 	// 2. zone
 	if param.Zone != "" {
+		key := string(tfv1.NodeRequirementKeyInstanceType)
 		requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
 			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-				Key:      string(tfv1.NodeRequirementKeyZone),
+				Key:      key,
 				Operator: corev1.NodeSelectorOpIn,
 				Values:   []string{param.Zone},
 			},
 		})
+		seen[key] = struct{}{}
 	}
 
 	// 3. region
 	if param.Region != "" {
+		key := string(tfv1.NodeRequirementKeyInstanceType)
 		requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
 			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-				Key:      string(tfv1.NodeRequirementKeyRegion),
+				Key:      key,
 				Operator: corev1.NodeSelectorOpIn,
 				Values:   []string{param.Region},
 			},
 		})
+		seen[key] = struct{}{}
 	}
 
 	// 4. custom GPU requirements
 	if p.nodeManagerConfig.NodeProvisioner.GPURequirements != nil {
 		for _, requirement := range p.nodeManagerConfig.NodeProvisioner.GPURequirements {
+			key := string(requirement.Key)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
 			requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
 				NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-					Key:      string(requirement.Key),
+					Key:      key,
 					Operator: requirement.Operator,
 					Values:   requirement.Values,
 				},
