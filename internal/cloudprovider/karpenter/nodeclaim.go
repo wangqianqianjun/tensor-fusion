@@ -29,6 +29,8 @@ var (
 	KarpenterVersion       = "v1"
 	kindNodeClaim          = "NodeClaim"
 	DefaultGPUResourceName = "nvidia.com/gpu"
+	EC2NodeClassGroup      = "karpenter.k8s.aws"
+	AWSOnDemandType        = "on-demand"
 )
 
 // KarpenterExtraConfig holds Karpenter-specific configuration parsed from ExtraParams
@@ -382,11 +384,10 @@ func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim,
 			},
 		})
 		seen[key] = struct{}{}
-
 	}
 	// 2. zone
 	if param.Zone != "" {
-		key := string(tfv1.NodeRequirementKeyInstanceType)
+		key := string(tfv1.NodeRequirementKeyZone)
 		requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
 			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
 				Key:      key,
@@ -399,7 +400,7 @@ func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim,
 
 	// 3. region
 	if param.Region != "" {
-		key := string(tfv1.NodeRequirementKeyInstanceType)
+		key := string(tfv1.NodeRequirementKeyRegion)
 		requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
 			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
 				Key:      key,
@@ -409,11 +410,28 @@ func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim,
 		})
 		seen[key] = struct{}{}
 	}
+	// 4. capacity type
+	if param.CapacityType != "" {
+		key := string(tfv1.NodeRequirementKeyCapacityType)
+		value := string(param.CapacityType)
+		if param.NodeClassRef.Group == EC2NodeClassGroup && value == string(tfv1.CapacityTypeOnDemand) {
+			value = AWSOnDemandType
+		}
+		requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
+			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+				Key:      key,
+				Operator: corev1.NodeSelectorOpIn,
+				Values:   []string{value},
+			},
+		})
+		seen[key] = struct{}{}
+	}
 
 	// 4. custom GPU requirements
 	if p.nodeManagerConfig.NodeProvisioner.GPURequirements != nil {
 		for _, requirement := range p.nodeManagerConfig.NodeProvisioner.GPURequirements {
 			key := string(requirement.Key)
+			//remove duplicate requirements
 			if _, exists := seen[key]; exists {
 				continue
 			}

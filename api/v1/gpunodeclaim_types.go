@@ -70,7 +70,7 @@ func init() {
 type CapacityTypeEnum string
 
 const (
-	CapacityTypeOnDemand CapacityTypeEnum = "on-demand"
+	CapacityTypeOnDemand CapacityTypeEnum = "OnDemand"
 
 	CapacityTypeReserved CapacityTypeEnum = "Reserved"
 

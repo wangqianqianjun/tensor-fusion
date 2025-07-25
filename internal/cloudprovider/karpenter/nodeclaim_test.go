@@ -121,7 +121,12 @@ func TestKarpenterGPUNodeProvider_CreateNode(t *testing.T) {
 				{
 					Key:      "karpenter.sh/capacity-type",
 					Operator: corev1.NodeSelectorOpIn,
-					Values:   []string{"on-demand"},
+					Values:   []string{"OnDemand"},
+				},
+				{
+					Key:      "node.kubernetes.io/instance-type",
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{"x6g.large"},
 				},
 			},
 			GPULabels: map[string]string{
@@ -167,10 +172,7 @@ func TestKarpenterGPUNodeProvider_CreateNode(t *testing.T) {
 				TFlopsOffered:    resource.MustParse("125"),
 				VRAMOffered:      resource.MustParse("64Gi"),
 				GPUDeviceOffered: 4,
-				ExtraParams: map[string]string{
-					"karpenter.nodeClaim.terminationGracePeriod": "30s",
-					"karpenter.gpuResource":                      "nvidia.com/gpu",
-				},
+				ExtraParams:      map[string]string{},
 			},
 			expectError: false,
 		},
