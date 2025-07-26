@@ -424,9 +424,13 @@ func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim,
 	if param.CapacityType != "" {
 		key := string(tfv1.NodeRequirementKeyCapacityType)
 		value := string(param.CapacityType)
-		if param.NodeClassRef.Group == EC2NodeClassGroup {
+		// if capacity type is not in the mapping, use the original value
+		// otherwise, use the mapping value
+		// https://github.com/kubernetes-sigs/karpenter/blob/f8da711d7e72b678e77f4758bc73a34ba34286d2/pkg/apis/v1/labels.go#L35
+		if _, exists := CapacityTypeMapping[param.CapacityType]; exists {
 			value = CapacityTypeMapping[param.CapacityType]
 		}
+
 		requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
 			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
 				Key:      key,
@@ -441,7 +445,7 @@ func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim,
 	if p.nodeManagerConfig.NodeProvisioner.GPURequirements != nil {
 		for _, requirement := range p.nodeManagerConfig.NodeProvisioner.GPURequirements {
 			key := string(requirement.Key)
-			//remove duplicate requirements
+			// remove duplicate requirements
 			if _, exists := seen[key]; exists {
 				continue
 			}
