@@ -56,7 +56,12 @@ var _ = Describe("FakeNodeClaimController", func() {
 						{
 							Key:      "karpenter.sh/capacity-type",
 							Operator: corev1.NodeSelectorOpIn,
-							Values:   []string{"on-demand"},
+							Values:   []string{"OnDemand"},
+						},
+						{
+							Key:      "node.kubernetes.io/instance-type",
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"x6g.large"},
 						},
 					},
 					GPULabels: map[string]string{

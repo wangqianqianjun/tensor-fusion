@@ -121,7 +121,12 @@ func TestKarpenterGPUNodeProvider_CreateNode(t *testing.T) {
 				{
 					Key:      "karpenter.sh/capacity-type",
 					Operator: corev1.NodeSelectorOpIn,
-					Values:   []string{"on-demand"},
+					Values:   []string{string(tfv1.CapacityTypeOnDemand)},
+				},
+				{
+					Key:      "node.kubernetes.io/instance-type",
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{"x6g.large"},
 				},
 			},
 			GPULabels: map[string]string{
@@ -167,10 +172,70 @@ func TestKarpenterGPUNodeProvider_CreateNode(t *testing.T) {
 				TFlopsOffered:    resource.MustParse("125"),
 				VRAMOffered:      resource.MustParse("64Gi"),
 				GPUDeviceOffered: 4,
-				ExtraParams: map[string]string{
-					"karpenter.nodeClaim.terminationGracePeriod": "30s",
-					"karpenter.gpuResource":                      "nvidia.com/gpu",
+				ExtraParams:      map[string]string{},
+			},
+			expectError: false,
+		},
+		{
+			name: "successful node creation with GPU",
+			param: &tfv1.GPUNodeClaimSpec{
+				NodeName:     "test-gpu-node",
+				Region:       "us-west-2",
+				Zone:         "us-west-2a",
+				InstanceType: "p3.8xlarge",
+				CapacityType: tfv1.CapacityTypeReserved,
+				NodeClassRef: tfv1.GroupKindName{
+					Name:    "test-ec2-node-class",
+					Group:   "karpenter.k8s.aws",
+					Kind:    "EC2NodeClass",
+					Version: "v1",
 				},
+				TFlopsOffered:    resource.MustParse("125"),
+				VRAMOffered:      resource.MustParse("64Gi"),
+				GPUDeviceOffered: 4,
+				ExtraParams:      map[string]string{},
+			},
+			expectError: false,
+		},
+		{
+			name: "successful node creation with GPU",
+			param: &tfv1.GPUNodeClaimSpec{
+				NodeName:     "test-gpu-node",
+				Region:       "us-west-2",
+				Zone:         "us-west-2a",
+				InstanceType: "p3.8xlarge",
+				CapacityType: tfv1.CapacityTypeSpot,
+				NodeClassRef: tfv1.GroupKindName{
+					Name:    "test-ec2-node-class",
+					Group:   "karpenter.k8s.aws",
+					Kind:    "EC2NodeClass",
+					Version: "v1",
+				},
+				TFlopsOffered:    resource.MustParse("125"),
+				VRAMOffered:      resource.MustParse("64Gi"),
+				GPUDeviceOffered: 4,
+				ExtraParams:      map[string]string{},
+			},
+			expectError: false,
+		},
+		{
+			name: "successful node creation with GPU",
+			param: &tfv1.GPUNodeClaimSpec{
+				NodeName:     "test-gpu-node",
+				Region:       "us-west-2",
+				Zone:         "us-west-2a",
+				InstanceType: "p3.8xlarge",
+				CapacityType: "unexpect-capacity-type",
+				NodeClassRef: tfv1.GroupKindName{
+					Name:    "test-ec2-node-class",
+					Group:   "karpenter.k8s.aws",
+					Kind:    "EC2NodeClass",
+					Version: "v1",
+				},
+				TFlopsOffered:    resource.MustParse("125"),
+				VRAMOffered:      resource.MustParse("64Gi"),
+				GPUDeviceOffered: 4,
+				ExtraParams:      map[string]string{},
 			},
 			expectError: false,
 		},
@@ -317,17 +382,28 @@ func TestKarpenterGPUNodeProvider_parseKarpenterConfig(t *testing.T) {
 			param: &tfv1.GPUNodeClaimSpec{
 				ExtraParams: nil,
 			},
-			expected: "", // Early return when extraParams is nil
+			expected: "nvidia.com/gpu", // Early return when extraParams is nil
 		},
 		{
 			name: "empty extra params",
 			param: &tfv1.GPUNodeClaimSpec{
 				ExtraParams: map[string]string{
-					"karpenter.nodeClassRef.kind":                "EC2NodeClass",
 					"karpenter.nodeClaim.terminationGracePeriod": "30s",
 				},
 			},
 			expected: "30s", // Default value should be set
+		},
+		{
+			name: "empty extra params",
+			param: &tfv1.GPUNodeClaimSpec{
+				ExtraParams: map[string]string{},
+			},
+			expected: "nvidia.com/gpu", // Default value should be set
+		},
+		{
+			name:     "empty extra params",
+			param:    &tfv1.GPUNodeClaimSpec{},
+			expected: "nvidia.com/gpu", // Default value should be set
 		},
 	}
 
@@ -341,6 +417,14 @@ func TestKarpenterGPUNodeProvider_parseKarpenterConfig(t *testing.T) {
 		assert.Equal(t, tests[1].expected, result.NodeClaim.TerminationGracePeriod)
 	})
 
+	t.Run(tests[2].name, func(t *testing.T) {
+		result := provider.parseKarpenterConfig(tests[2].param)
+		assert.Equal(t, tests[2].expected, string(result.GPUResourceName))
+	})
+	t.Run(tests[3].name, func(t *testing.T) {
+		result := provider.parseKarpenterConfig(tests[3].param)
+		assert.Equal(t, tests[3].expected, string(result.GPUResourceName))
+	})
 }
 
 func TestSetNestedValue(t *testing.T) {
