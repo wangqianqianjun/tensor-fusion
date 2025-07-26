@@ -30,7 +30,17 @@ var (
 	kindNodeClaim          = "NodeClaim"
 	DefaultGPUResourceName = "nvidia.com/gpu"
 	EC2NodeClassGroup      = "karpenter.k8s.aws"
-	AWSOnDemandType        = "on-demand"
+	// AWS capacity type: https://karpenter.sh/docs/concepts/scheduling/#well-known-labels
+	AWSOnDemandType = "on-demand"
+	AWSReservedType = "reserved"
+	AWSSpotType     = "spot"
+
+	// CapacityTypeMapping maps the CapacityTypeEnum to the corresponding Karpenter capacity type
+	CapacityTypeMapping = map[tfv1.CapacityTypeEnum]string{
+		tfv1.CapacityTypeOnDemand: AWSOnDemandType,
+		tfv1.CapacityTypeSpot:     AWSReservedType,
+		tfv1.CapacityTypeReserved: AWSSpotType,
+	}
 )
 
 // KarpenterExtraConfig holds Karpenter-specific configuration parsed from ExtraParams
@@ -414,8 +424,8 @@ func (p KarpenterGPUNodeProvider) buildRequirements(nodeClaim *karpv1.NodeClaim,
 	if param.CapacityType != "" {
 		key := string(tfv1.NodeRequirementKeyCapacityType)
 		value := string(param.CapacityType)
-		if param.NodeClassRef.Group == EC2NodeClassGroup && value == string(tfv1.CapacityTypeOnDemand) {
-			value = AWSOnDemandType
+		if param.NodeClassRef.Group == EC2NodeClassGroup {
+			value = CapacityTypeMapping[param.CapacityType]
 		}
 		requirements = append(requirements, karpv1.NodeSelectorRequirementWithMinValues{
 			NodeSelectorRequirement: corev1.NodeSelectorRequirement{
