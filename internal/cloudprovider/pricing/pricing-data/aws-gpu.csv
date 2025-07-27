@@ -69,7 +69,7 @@ G5G Extra Large,g5g.xlarge,8 GiB,4 vCPUs,1,NVIDIA T4G Tensor Core,16 GiB,arm64,U
 G4AD Extra Large,g4ad.xlarge,16 GiB,4 vCPUs,1,AMD Radeon Pro V520,8 GiB,x86_64,Up to 10 Gigabit,$0.3785 hourly,$0.2385 hourly,unavailable,$0.5625 hourly,$0.4225 hourly
 INF1 Double Extra Large,inf1.2xlarge,16 GiB,8 vCPUs,1,AWS Inferentia,0 GiB,x86_64,Up to 25 Gigabit,$0.3620 hourly,$0.2280 hourly,unavailable,unavailable,unavailable
 INF1 Extra Large,inf1.xlarge,8 GiB,4 vCPUs,1,AWS Inferentia,0 GiB,x86_64,Up to 25 Gigabit,$0.2280 hourly,$0.1440 hourly,unavailable,unavailable,unavailable
-P6-B200 High Performance and Machine Learning GPU 48xlarge,p6-b200.48xlarge,2048 GiB,192 vCPUs,8,NVIDIA B200,1440 GiB,x86_64,3200 Gigabit,unavailable,unavailable,unavailable,unavailable,unavailable
+P6-B200 High Performance and Machine Learning GPU 48xlarge,p6-b200.48xlarge,2048 GiB,192 vCPUs,8,B200_SXM,1440 GiB,x86_64,3200 Gigabit,unavailable,unavailable,unavailable,unavailable,unavailable
 P4D Highest Performance GPU 24xlarge,p4d.24xlarge,1152 GiB,96 vCPUs,8,A100_SXM_40G,320 GiB,x86_64,4x 100 Gigabit,unavailable,$13.9211 hourly,unavailable,unavailable,unavailable
 P5 48xlarge,p5.48xlarge,2048 GiB,192 vCPUs,8,H100_SXM,640 GiB,x86_64,3200 Gigabit,unavailable,unavailable,unavailable,unavailable,unavailable
 P5e High Performance Computing GPU 48xlarge,p5e.48xlarge,2048 GiB,192 vCPUs,8,H200,1128 GiB,x86_64,3200 Gigabit,unavailable,unavailable,unavailable,unavailable,unavailable
