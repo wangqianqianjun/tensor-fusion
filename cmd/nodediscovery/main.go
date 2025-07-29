@@ -35,6 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
+const TMP_PATH = "/tmp"
+
 var Scheme = runtime.NewScheme()
 
 func init() {
@@ -167,27 +169,22 @@ func main() {
 		availableVRAM.Add(gpu.Status.Available.Vram)
 	}
 
-	ns := nodeStatus()
-	ns.TotalTFlops = totalTFlops
-	ns.TotalVRAM = totalVRAM
-	ns.AvailableTFlops = availableTFlops
-	ns.AvailableVRAM = availableVRAM
-	ns.TotalGPUs = int32(count)
-	ns.ManagedGPUs = int32(count)
-	ns.ManagedGPUDeviceIDs = allDeviceIDs
-	ns.NodeInfo.RAMSize = *resource.NewQuantity(getTotalHostRAM(), resource.DecimalSI)
-	ns.NodeInfo.DataDiskSize = *resource.NewQuantity(getDiskInfo(constants.TFDataPath), resource.DecimalSI)
-	gpunode.Status = *ns
-
+	// Use proper patch-based update with retry on conflict
 	err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		// Get the latest version of the resource
 		currentGPUNode := &tfv1.GPUNode{}
 		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(gpunode), currentGPUNode); err != nil {
 			return err
 		}
 
-		currentGPUNode.Status = *ns
+		// Create a patch from the original to the desired state
+		patch := client.MergeFrom(currentGPUNode.DeepCopy())
 
-		return k8sClient.Status().Update(ctx, currentGPUNode)
+		// Update status fields conditionally
+		updateGPUNodeStatus(&currentGPUNode.Status, totalTFlops, totalVRAM, int32(count), allDeviceIDs)
+
+		// Apply the patch using the status subresource
+		return k8sClient.Status().Patch(ctx, currentGPUNode, patch)
 	})
 	if err != nil {
 		ctrl.Log.Error(err, "failed to update status of GPUNode after retries")
@@ -268,6 +265,9 @@ func createOrUpdateTensorFusionGPU(
 		if gpu.Status.UsedBy == "" {
 			gpu.Status.UsedBy = tfv1.UsedByTensorFusion
 		}
+		if gpu.Status.Phase == "" {
+			gpu.Status.Phase = tfv1.TensorFusionGPUPhasePending
+		}
 		return k8sClient.Status().Patch(ctx, gpu, client.Merge)
 	})
 	if err != nil {
@@ -276,12 +276,6 @@ func createOrUpdateTensorFusionGPU(
 	}
 
 	return gpu
-}
-
-func nodeStatus() *tfv1.GPUNodeStatus {
-	return &tfv1.GPUNodeStatus{
-		Phase: tfv1.TensorFusionGPUNodePhaseRunning,
-	}
 }
 
 func kubeClient() (client.Client, error) {
@@ -316,7 +310,7 @@ func kubeClient() (client.Client, error) {
 func getTotalHostRAM() int64 {
 	v, err := mem.VirtualMemory()
 	if err != nil {
-		fmt.Printf("error getting memory info: %v\n", err)
+		fmt.Printf("[warning] getting memory info failed: %v\n", err)
 		return 0
 	}
 	return int64(v.Total)
@@ -325,7 +319,7 @@ func getTotalHostRAM() int64 {
 func getDiskInfo(path string) (total int64) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		fmt.Printf("error getting disk path: %v\n", err)
+		fmt.Printf("[warning] getting disk path failed: %v\n", err)
 		return 0
 	}
 
@@ -335,20 +329,42 @@ func getDiskInfo(path string) (total int64) {
 		if errors.Is(err, syscall.ENOENT) {
 			err = os.MkdirAll(absPath, 0o755)
 			if err != nil {
-				fmt.Printf("error creating folder: %s, err: %v\n", absPath, err)
+				fmt.Printf("[warning] creating folder to discover disk space failed: %s, err: %v\n", absPath, err)
 				return 0
 			}
 			err = syscall.Statfs(absPath, &stat)
 			if err != nil {
-				fmt.Printf("error getting disk stats after creation: %v\n", err)
+				fmt.Printf("[warning] getting disk stats after creation failed: %v\n", err)
 				return 0
 			}
 		} else {
-			fmt.Printf("error getting disk stats: %v\n", err)
+			fmt.Printf("[warning] getting disk stats failed: %v\n", err)
 			return 0
 		}
 	}
 
 	total = int64(stat.Blocks * uint64(stat.Bsize))
 	return total
+}
+
+// updateGPUNodeStatus conditionally updates GPUNode status fields
+// Only updates phase if it's empty, and available resources if they are empty
+func updateGPUNodeStatus(
+	status *tfv1.GPUNodeStatus,
+	totalTFlops, totalVRAM resource.Quantity,
+	totalGPUs int32, deviceIDs []string) {
+	// Always update these fields as they represent current state
+	status.TotalTFlops = totalTFlops
+	status.TotalVRAM = totalVRAM
+	status.TotalGPUs = totalGPUs
+	status.ManagedGPUs = totalGPUs
+	status.ManagedGPUDeviceIDs = deviceIDs
+	status.NodeInfo = tfv1.GPUNodeInfo{
+		RAMSize:      *resource.NewQuantity(getTotalHostRAM(), resource.DecimalSI),
+		DataDiskSize: *resource.NewQuantity(getDiskInfo(TMP_PATH), resource.DecimalSI),
+	}
+	// Only update phase if it's empty (unset)
+	if status.Phase == "" {
+		status.Phase = tfv1.TensorFusionGPUNodePhasePending
+	}
 }
