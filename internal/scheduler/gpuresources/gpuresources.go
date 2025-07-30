@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
@@ -50,7 +51,7 @@ type GPUSchedulingStateData struct {
 	ValidNodeGPUScore map[string]map[string]int
 
 	// In Reserve stage, bind GPUs to pod, update allocator cache
-	// In PreBind stage, fetch final GPUs call Pod patch API to update annotation
+	// In PostBind stage, fetch final GPUs call Pod patch API to update annotation
 	FinalGPUs []string
 }
 
@@ -93,6 +94,9 @@ func (s *GPUFit) PreFilter(ctx context.Context, state *framework.CycleState, pod
 	// Handle progressive migration case
 	if utils.IsProgressiveMigration() && utils.HasGPUResourceRequest(pod) {
 		nodeNames := s.allocator.ListNonUsingNodes()
+		s.fh.EventRecorder().Eventf(pod, pod, v1.EventTypeNormal, "ScheduleWithNativeGPU",
+			"Scheduling non-TF workload for progressive migration",
+			"use native GPU resources, available native GPU nodes: "+strconv.Itoa(len(nodeNames)))
 		return &framework.PreFilterResult{
 			NodeNames: nodeNames,
 		}, framework.NewStatus(framework.Success, "progressive migration for native resources claim")
@@ -123,6 +127,8 @@ func (s *GPUFit) PreFilter(ctx context.Context, state *framework.CycleState, pod
 	}
 
 	if err != nil {
+		s.fh.EventRecorder().Eventf(pod, pod, v1.EventTypeWarning, "GPUQuotaOrCapacityNotEnough",
+			"check quota and filter", "TensorFusion schedule failed, no enough resource or quotas: "+err.Error())
 		s.logger.Error(err, "failed to check quota and filter", "pod", pod.Name)
 		return nil, framework.NewStatus(framework.Unschedulable, err.Error())
 	}
@@ -138,6 +144,9 @@ func (s *GPUFit) PreFilter(ctx context.Context, state *framework.CycleState, pod
 
 	// assign score based on different strategies
 	score := s.allocator.Score(ctx, s.cfg, allocRequest, validNodes)
+
+	s.fh.EventRecorder().Eventf(pod, pod, v1.EventTypeNormal, "PreScheduleDone", "pre filter for TensorFusion workload",
+		"TensorFusion pre schedule done, valid GPU node count: "+strconv.Itoa(nodeNames.Len()))
 
 	if s.logger.V(6).Enabled() {
 		jsonStr, _ := json.Marshal(validNodes)
@@ -298,5 +307,10 @@ func (s *GPUFit) PostBind(ctx context.Context, state *framework.CycleState, pod 
 	err = s.client.Patch(s.ctx, pod, client.RawPatch(types.JSONPatchType, patch))
 	if err != nil {
 		s.logger.Error(err, "failed to patch gpu device ids", "pod", pod.Name)
+		s.fh.EventRecorder().Eventf(pod, pod, v1.EventTypeWarning, "GPUDeviceAllocatedFailed",
+			"Attach GPU device ID info failed", "Can not add GPU device IDs: "+gpuIDs)
+	} else {
+		s.fh.EventRecorder().Eventf(pod, pod, v1.EventTypeNormal, "GPUDeviceAllocated",
+			"Attach GPU device ID info", "Attach TensorFusion GPU device IDs to Pod: "+gpuIDs)
 	}
 }

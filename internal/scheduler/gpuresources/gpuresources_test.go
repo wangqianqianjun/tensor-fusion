@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultbinder"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/queuesort"
@@ -236,6 +237,7 @@ func (s *GPUResourcesSuite) SetupTest() {
 		s.ctx, registeredPlugins, "",
 		frameworkruntime.WithPodNominator(testutil.NewPodNominator(nil)),
 		frameworkruntime.WithSnapshotSharedLister(testutil.NewFakeSharedLister(pods, nodes)),
+		frameworkruntime.WithEventRecorder(&events.FakeRecorder{}),
 	)
 	s.NoError(err)
 	s.fwk = fwk
@@ -494,8 +496,8 @@ func (s *GPUResourcesSuite) TestReserveAndUnreserve() {
 	s.Len(gpu.Status.RunningApps, 1)
 }
 
-func (s *GPUResourcesSuite) TestPreBind() {
-	log.FromContext(s.ctx).Info("Running TestPreBind")
+func (s *GPUResourcesSuite) TestPostBind() {
+	log.FromContext(s.ctx).Info("Running TestPostBind")
 	state := framework.NewCycleState()
 	pod := s.makePod("p1",
 		map[string]string{
