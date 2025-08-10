@@ -213,6 +213,9 @@ func (m *TensorFusionPodMutator) createOrUpdateWorkload(ctx context.Context, pod
 				Labels: map[string]string{
 					constants.GpuPoolKey: tfInfo.Profile.PoolName,
 				},
+				Annotations: map[string]string{
+					constants.WorkloadModeAnnotation: constants.WorkloadModeDynamic,
+				},
 			},
 			Spec: tfv1.WorkloadProfileSpec{
 				Replicas:   nil,
@@ -223,6 +226,11 @@ func (m *TensorFusionPodMutator) createOrUpdateWorkload(ctx context.Context, pod
 				GPUModel:   tfInfo.Profile.GPUModel,
 				IsLocalGPU: tfInfo.Profile.IsLocalGPU,
 			},
+		}
+
+		// Pass through disable features annotation
+		if pod.Labels[constants.DisableFeaturesAnnotation] != "" {
+			workload.Annotations[constants.DisableFeaturesAnnotation] = pod.Labels[constants.DisableFeaturesAnnotation]
 		}
 
 		if firstLevelOwnerRef != nil {
@@ -380,7 +388,11 @@ func assignPodLabelsAndAnnotations(isLocalGPU bool, pod *corev1.Pod, pool *tfv1.
 }
 
 func addConnectionForRemoteFixedReplicaVirtualGPU(pod *corev1.Pod, container *corev1.Container, clientConfig *tfv1.ClientConfig) {
-	connectionName := fmt.Sprintf("%s%s", pod.GenerateName, utils.NewShortID(10))
+	prefix := pod.GenerateName
+	if pod.GenerateName == "" {
+		prefix = pod.Name + constants.TFConnectionNamePrefix
+	}
+	connectionName := fmt.Sprintf("%s%s", prefix, utils.NewShortID(10))
 	connectionNamespace := pod.Namespace
 
 	// metadata TF_POD_NAME and TF_CONNECTION_NAMESPACE
@@ -502,8 +514,8 @@ func (m *TensorFusionPodMutator) assignClusterHostPortFromLeader(pod *corev1.Pod
 }
 
 func calculateQoSLevel(profile *tfv1.WorkloadProfileSpec, pool *tfv1.GPUPool) tfv1.QoSLevel {
-	sameReqLimits := profile.Resources.Limits.Tflops.Value() == profile.Resources.Requests.Tflops.Value() &&
-		profile.Resources.Limits.Vram.Value() == profile.Resources.Requests.Vram.Value()
+	sameReqLimits := profile.Resources.Limits.Tflops.Cmp(profile.Resources.Requests.Tflops) == 0 &&
+		profile.Resources.Limits.Vram.Cmp(profile.Resources.Requests.Vram) == 0
 
 	// set to critical if req == limits, same logic as Kubernetes QoS
 	if sameReqLimits {

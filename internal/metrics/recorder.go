@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"io"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -76,7 +77,7 @@ func SetWorkerMetricsByWorkload(pod *corev1.Pod) {
 	if _, ok := workerMetricsMap[pod.Name]; !ok {
 		workerMetricsMap[pod.Name] = &WorkerResourceMetrics{
 			WorkerName:     pod.Name,
-			WorkloadName:   pod.Annotations[constants.WorkloadKey],
+			WorkloadName:   pod.Labels[constants.WorkloadKey],
 			PoolName:       pod.Annotations[constants.GpuPoolKey],
 			Namespace:      pod.Namespace,
 			QoS:            pod.Annotations[constants.QoSLevelAnnotation],
@@ -92,13 +93,14 @@ func SetWorkerMetricsByWorkload(pod *corev1.Pod) {
 	metricsItem.TflopsLimit = gpuLimitResource.Tflops.AsApproximateFloat64()
 	metricsItem.VramBytesRequest = gpuRequestResource.Vram.AsApproximateFloat64()
 	metricsItem.VramBytesLimit = gpuLimitResource.Vram.AsApproximateFloat64()
-	if count <= 0 {
-		// handle invalid data if exists
+	metricsItem.Ready = utils.IsPodConditionTrue(pod.Status.Conditions, corev1.PodReady)
+	if count <= 0 || count > uint64(math.MaxInt32) {
+		// handle invalid or out-of-bounds data
 		metricsItem.GPUCount = 1
 	} else {
 		metricsItem.GPUCount = int(count)
 	}
-	metricsItem.WorkloadName = pod.Annotations[constants.WorkloadKey]
+	metricsItem.WorkloadName = pod.Labels[constants.WorkloadKey]
 }
 
 func SetNodeMetrics(node *tfv1.GPUNode, poolObj *tfv1.GPUPool, gpuModels []string) {
@@ -115,6 +117,7 @@ func SetNodeMetrics(node *tfv1.GPUNode, poolObj *tfv1.GPUPool, gpuModels []strin
 	// Fields that possibly change after initialization
 	metricsItem := nodeMetricsMap[node.Name]
 	metricsItem.PoolName = poolObj.Name
+	metricsItem.Phase = string(node.Status.Phase)
 	metricsItem.SetGPUModelAndCount(gpuModels)
 
 	totalTflops := node.Status.TotalTFlops.AsApproximateFloat64()
@@ -278,6 +281,7 @@ func (mr *MetricsRecorder) RecordMetrics(writer io.Writer) {
 		enc.AddField("raw_cost", metrics.RawCost)
 		enc.AddField("vram_bytes_limit", metrics.VramBytesLimit)
 		enc.AddField("vram_bytes_request", metrics.VramBytesRequest)
+		enc.AddField("ready", metrics.Ready)
 
 		enc.EndLine(now)
 	}
@@ -301,6 +305,7 @@ func (mr *MetricsRecorder) RecordMetrics(writer io.Writer) {
 
 		enc.AddTag("node", metrics.NodeName)
 		enc.AddTag("pool", metrics.PoolName)
+		enc.AddTag("phase", metrics.Phase)
 
 		enc.AddField("allocated_tflops", metrics.AllocatedTflops)
 		enc.AddField("allocated_tflops_percent", metrics.AllocatedTflopsPercent)
@@ -370,7 +375,7 @@ func (mr *MetricsRecorder) getWorkerRawCost(metrics *WorkerResourceMetrics, dura
 func (mr *MetricsRecorder) getNodeRawCost(metrics *NodeResourceMetrics, duration time.Duration, hourlyUnitPriceMap map[string]float64) float64 {
 	cost := 0.0
 	for _, gpuModel := range metrics.gpuModels {
-		cost += metrics.AllocatedTflops * duration.Hours() * hourlyUnitPriceMap[gpuModel]
+		cost += duration.Seconds() * hourlyUnitPriceMap[gpuModel] / 3600.0
 	}
 	return cost
 }

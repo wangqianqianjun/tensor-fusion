@@ -37,6 +37,7 @@ import (
 )
 
 const MaxGPUCounterPerAllocation = 128
+const CleanUpCheckInterval = 3 * time.Minute
 
 type Strategy interface {
 	Score(gpu tfv1.GPU) int
@@ -83,8 +84,9 @@ type GpuAllocator struct {
 	dirtyQueueLock sync.Mutex
 
 	// each pod can only allocate and deallocate once, and deallocation must be after allocation
-	uniqueAllocation   map[string]*tfv1.AllocRequest
-	uniqueDeallocation map[string]struct{}
+	uniqueAllocation       map[string]*tfv1.AllocRequest
+	uniqueDeallocation     map[string]struct{}
+	podNamespaceNsToPodUID map[string]string
 
 	maxWorkerPerNode int
 
@@ -119,9 +121,10 @@ func NewGpuAllocator(ctx context.Context, client client.Client, syncInterval tim
 		dirtyQueue:      make(map[types.NamespacedName]struct{}),
 		ctx:             ctx,
 
-		uniqueAllocation:   make(map[string]*tfv1.AllocRequest),
-		uniqueDeallocation: make(map[string]struct{}),
-		initializedCh:      make(chan struct{}),
+		uniqueAllocation:       make(map[string]*tfv1.AllocRequest),
+		uniqueDeallocation:     make(map[string]struct{}),
+		podNamespaceNsToPodUID: make(map[string]string),
+		initializedCh:          make(chan struct{}),
 	}
 
 	return allocator
@@ -269,6 +272,7 @@ func (s *GpuAllocator) Bind(
 	}
 	req.GPUNames = gpuNames
 	s.uniqueAllocation[string(req.PodMeta.UID)] = req
+	s.podNamespaceNsToPodUID[req.PodMeta.Namespace+"/"+req.PodMeta.Name] = string(req.PodMeta.UID)
 	return result, nil
 }
 
@@ -399,13 +403,14 @@ func (s *GpuAllocator) Dealloc(
 		s.markGPUDirty(gpuNameNs)
 	}
 
-	// Deallocate quota resources in memory (atomic operation)
-	s.quotaStore.DeallocateQuota(workloadNameNamespace.Namespace, request)
-
 	// remove pod from nodeWorkerStore
 	delete(s.nodeWorkerStore[nodeName], types.NamespacedName{Name: podMeta.Name, Namespace: podMeta.Namespace})
 	delete(s.uniqueAllocation, podUID)
+	delete(s.podNamespaceNsToPodUID, podMeta.Namespace+"/"+podMeta.Name)
 	s.uniqueDeallocation[podUID] = struct{}{}
+
+	// Deallocate quota resources in memory (atomic operation)
+	s.quotaStore.DeallocateQuota(workloadNameNamespace.Namespace, request)
 
 	log.Info("GPU deallocation successful",
 		"namespace", workloadNameNamespace.Namespace,
@@ -523,6 +528,13 @@ func (s *GpuAllocator) ListNonUsingNodes() sets.Set[string] {
 	return set
 }
 
+func (s *GpuAllocator) DeallocByPodIdentifier(ctx context.Context, podIdentifier types.NamespacedName) {
+	podUID := s.podNamespaceNsToPodUID[podIdentifier.String()]
+	if request, exists := s.uniqueAllocation[podUID]; exists {
+		s.Dealloc(request.WorkloadNameNamespace, request.GPUNames, request.PodMeta)
+	}
+}
+
 func (s *GpuAllocator) checkGPUCapacityAndQuota(gpu *tfv1.GPU, oldRes, newRes tfv1.Resource) (tfv1.Resource, error) {
 	if gpu.Status.Available == nil {
 		return tfv1.Resource{}, fmt.Errorf("GPU available is nil, skip check")
@@ -568,6 +580,12 @@ func (s *GpuAllocator) Score(ctx context.Context, cfg *config.GPUFitConfig, req 
 	for nodeName, gpus := range validNodeGPUs {
 		for _, gpu := range gpus {
 			res := strategy.Score(gpu)
+
+			// making Pending GPU to lower score, prefer not scheduling to them
+			if gpu.Status.Phase == tfv1.TensorFusionGPUPhasePending {
+				res = res / 4
+			}
+
 			if _, exists := result[nodeName]; !exists {
 				result[nodeName] = make(map[string]int, len(gpus))
 			}
@@ -781,7 +799,7 @@ func (s *GpuAllocator) handleGPUCreate(ctx context.Context, gpu *tfv1.GPU) {
 	defer s.storeMutex.Unlock()
 
 	if s.gpuStore[key] != nil {
-		syncGPUStatusFromCluster(s.gpuStore[key], gpu)
+		syncGPUMetadataAndStatusFromCluster(s.gpuStore[key], gpu)
 		log.V(6).Info("GPU already exists in store", "name", key.Name)
 		return
 	}
@@ -823,7 +841,7 @@ func (s *GpuAllocator) handleGPUUpdate(ctx context.Context, gpu *tfv1.GPU) {
 		s.handleGPUUpdateCapacityDiff(old, gpu)
 
 		// should never update available and runningApps here, to avoid circular update
-		syncGPUStatusFromCluster(old, gpu)
+		syncGPUMetadataAndStatusFromCluster(old, gpu)
 		log.V(6).Info("Updated GPU in store (preserve Available)", "name", key.Name, "phase", gpu.Status.Phase)
 	} else {
 		s.gpuStore[key] = gpu.DeepCopy()
@@ -831,15 +849,20 @@ func (s *GpuAllocator) handleGPUUpdate(ctx context.Context, gpu *tfv1.GPU) {
 	}
 }
 
-func syncGPUStatusFromCluster(old *tfv1.GPU, gpu *tfv1.GPU) {
+func syncGPUMetadataAndStatusFromCluster(old *tfv1.GPU, gpu *tfv1.GPU) {
+	old.Annotations = gpu.Annotations
+	old.Labels = gpu.Labels
+	old.ResourceVersion = gpu.ResourceVersion
+	old.Generation = gpu.Generation
+	old.OwnerReferences = gpu.OwnerReferences
+	old.Kind = gpu.Kind
+	old.APIVersion = gpu.APIVersion
 	old.Status.Phase = gpu.Status.Phase
 	old.Status.Message = gpu.Status.Message
 	old.Status.UUID = gpu.Status.UUID
 	old.Status.NodeSelector = gpu.Status.NodeSelector
 	old.Status.GPUModel = gpu.Status.GPUModel
 	old.Status.UsedBy = gpu.Status.UsedBy
-	old.ResourceVersion = gpu.ResourceVersion
-	old.Generation = gpu.Generation
 }
 
 func (s *GpuAllocator) handleGPUUpdateCapacityDiff(old, gpu *tfv1.GPU) {
@@ -1002,6 +1025,7 @@ func (s *GpuAllocator) markGPUDirtyLocked(key types.NamespacedName) {
 func (s *GpuAllocator) ReconcileAllocationState() {
 	s.reconcileWorkerOnce.Do(func() {
 		s.reconcileAllocationState()
+		go s.startWorkerCleanUpChecker()
 	})
 }
 
@@ -1031,6 +1055,7 @@ func (s *GpuAllocator) reconcileAllocationState() {
 				return false
 			}
 			s.uniqueAllocation[string(worker.UID)] = &allocRequest
+			s.podNamespaceNsToPodUID[worker.Namespace+"/"+worker.Name] = string(worker.UID)
 			s.addAllocationMap(worker.Spec.NodeName, worker.ObjectMeta)
 		}
 		return scheduled && !deletedAndDeAllocated
@@ -1089,6 +1114,32 @@ func (s *GpuAllocator) reconcileAllocationState() {
 	// reconcile quota store state
 	s.quotaStore.ReconcileQuotaStore(ctx, s.uniqueAllocation)
 	log.FromContext(ctx).Info("Quota store data reconciled")
+}
+
+func (s *GpuAllocator) startWorkerCleanUpChecker() {
+	ticker := time.NewTicker(CleanUpCheckInterval)
+	for {
+		select {
+		case <-ticker.C:
+			cleaned := 0
+			for _, allocRequest := range s.uniqueAllocation {
+				if allocRequest.PodMeta.Name == "" {
+					continue
+				}
+				pod := &v1.Pod{}
+				err := s.Get(s.ctx, types.NamespacedName{Namespace: allocRequest.PodMeta.Namespace, Name: allocRequest.PodMeta.Name}, pod)
+				if errors.IsNotFound(err) {
+					log.FromContext(s.ctx).Info("Pod has been deleted, deallocate GPU", "pod", allocRequest.PodMeta.Name, "namespace", allocRequest.PodMeta.Namespace)
+					s.Dealloc(allocRequest.WorkloadNameNamespace, allocRequest.GPUNames, allocRequest.PodMeta)
+					cleaned++
+				}
+			}
+			log.FromContext(s.ctx).Info("GPU allocation cleaned up check completed", "total workers",
+				len(s.uniqueAllocation), "backup cleaner cleaned", cleaned)
+		case <-s.ctx.Done():
+			return
+		}
+	}
 }
 
 func addRunningApp(ctx context.Context, gpu *tfv1.GPU, workloadNameNamespace tfv1.NameNamespace) {

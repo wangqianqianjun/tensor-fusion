@@ -120,6 +120,11 @@ func (r *GPUNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
+	if node.Status.TotalGPUs == 0 {
+		log.Info("GPU on this node has not been discovered, wait next loop", "node", node.Name)
+		return ctrl.Result{}, nil
+	}
+
 	hypervisorName, err := r.reconcileHypervisorPod(ctx, node, poolObj)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -151,8 +156,9 @@ func (r *GPUNodeReconciler) checkStatusAndUpdateVirtualCapacity(ctx context.Cont
 			node.Status.Phase = tfv1.TensorFusionGPUNodePhasePending
 			err := r.Status().Update(ctx, node)
 			if err != nil {
-				return fmt.Errorf("failed to update GPU node status: %w", err)
+				return fmt.Errorf("failed to update GPU node status to pending: %w", err)
 			}
+			metrics.SetNodeMetrics(node, poolObj, nil)
 		}
 
 		err := r.syncStatusToGPUDevices(ctx, node, tfv1.TensorFusionGPUPhasePending)
@@ -167,7 +173,7 @@ func (r *GPUNodeReconciler) checkStatusAndUpdateVirtualCapacity(ctx context.Cont
 			return err
 		}
 		if len(gpuModels) == 0 {
-			// when GPU created, will trigger next reconcile
+			log.FromContext(ctx).Info("GPU models not found, skip update", "node", node.Name)
 			return nil
 		}
 
@@ -212,7 +218,7 @@ func (r *GPUNodeReconciler) syncStatusToGPUDevices(ctx context.Context, node *tf
 			patch := client.MergeFrom(gpu.DeepCopy())
 			gpu.Status.Phase = state
 			if err := r.Status().Patch(ctx, &gpu, patch); err != nil {
-				return fmt.Errorf("failed to patch GPU device status: %w", err)
+				return fmt.Errorf("failed to patch GPU device status to %s: %w", state, err)
 			}
 		}
 	}
@@ -283,6 +289,16 @@ func (r *GPUNodeReconciler) reconcileNodeDiscoveryJob(
 		} else {
 			return fmt.Errorf("create node discovery job %w", err)
 		}
+	}
+
+	if job.Status.Failed > 0 {
+		log.Info("node discovery job failed, update GPU node status to failed", "node", gpunode.Name)
+		// Update phase to failed, require manual address why it failed and restart of node discovery job
+		gpunode.Status.Phase = tfv1.TensorFusionGPUNodePhaseFailed
+		if err := r.Status().Update(ctx, gpunode); err != nil {
+			return fmt.Errorf("failed to update GPU node status to failed: %w", err)
+		}
+		metrics.SetNodeMetrics(gpunode, pool, nil)
 	}
 
 	return nil

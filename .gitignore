@@ -36,3 +36,6 @@ prompts/*
 tmp*
 
 __debug*
+
+vendor
+logs

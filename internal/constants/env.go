@@ -31,6 +31,9 @@ const (
 	KubeletDevicePluginVolumeName = "device-plugin"
 	KubeletDevicePluginPath       = "/var/lib/kubelet/device-plugins"
 
+	KubeletPodResourcesVolumeName = "pod-resources"
+	KubeletPodResourcesPath       = "/var/lib/kubelet/pod-resources"
+
 	TensorFusionVectorConfigName       = "tensor-fusion-sys-vector-config"
 	TensorFusionVectorConfigVolumeName = "vector-config"
 	TensorFusionVectorConfigMountPath  = "/etc/vector/vector.yaml"
@@ -69,8 +72,9 @@ const (
 	LdPreloadFileName = "ld.so.preload"
 	LdPreloadFile     = "/etc/ld.so.preload"
 
-	TFLibsVolumeName      = "tf-libs"
-	TFLibsVolumeMountPath = "/tensor-fusion"
+	TFLibsVolumeName       = "tf-libs"
+	TFLibsVolumeMountPath  = "/tensor-fusion"
+	TFConnectionNamePrefix = "tf-vgpu-"
 
 	HostIPFieldRef       = "status.hostIP"
 	NodeNameFieldRef     = "spec.nodeName"
@@ -140,4 +144,9 @@ const (
 const (
 	NodeDiscoveryReportGPUNodeEnvName = "NODE_DISCOVERY_REPORT_GPU_NODE"
 	NodeDiscoveryHostNameEnv          = "HOSTNAME"
+)
+
+const (
+	KubeApiVersionMajorEnv = "KUBE_API_VERSION_MAJOR"
+	KubeApiVersionMinorEnv = "KUBE_API_VERSION_MINOR"
 )

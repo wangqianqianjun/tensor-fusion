@@ -77,6 +77,12 @@ rules:
   - update
   - watch
 - apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
   - batch
   resources:
   - cronjobs
@@ -164,23 +170,3 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - karpenter.sh
-  resources:
-  - nodeclaims
-  verbs:
-  - get
-  - list
-  - watch
-  - update
-  - delete
-  - create
-  - patch
-- apiGroups:
-  - karpenter.k8s.aws
-  resources:
-  - ec2nodeclasses
-  verbs:
-  - get
-  - list
-  - watch
