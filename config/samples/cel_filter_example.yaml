@@ -1,0 +1,74 @@
+apiVersion: tensor-fusion.ai/v1
+kind: SchedulingConfigTemplate
+metadata:
+  name: cel-filter-example
+spec:
+  placement:
+    mode: CompactFirst
+    allowUsingLocalGPU: true
+    
+    # Traditional GPU filters (still supported)
+    gpuFilters:
+    - type: avoidTooMuchConnectionsOnSameGPU
+      params:
+        connectionNum: 150
+    
+    # CEL-based filters for advanced filtering logic
+    celFilters:
+    # High priority filter: only use running GPUs
+    - name: "only-running-gpus"
+      expression: "gpu.phase == 'Running'"
+      priority: 100
+      
+    # Medium-high priority: ensure sufficient resources available
+    - name: "sufficient-resources"
+      expression: "gpu.available.tflops >= 0.5 && gpu.available.vram >= 4096000000"
+      priority: 90
+      
+    # Medium priority: prefer premium tier GPUs
+    - name: "prefer-premium-gpus"
+      expression: "gpu.labels != null && 'gpu-tier' in gpu.labels && gpu.labels['gpu-tier'] == 'premium'"
+      priority: 80
+      
+    # Lower priority: avoid overloaded GPUs
+    - name: "avoid-overloaded-gpus"
+      expression: "size(gpu.runningApps) < 3"
+      priority: 70
+      
+    # GPU model specific filters
+    - name: "nvidia-only"
+      expression: "gpu.gpuModel.startsWith('NVIDIA')"
+      priority: 60
+      
+    # Complex condition example
+    - name: "complex-filter"
+      expression: |
+        gpu.phase == 'Running' && 
+        gpu.available.tflops > 0.3 &&
+        (
+          (gpu.labels != null && 'workload-type' in gpu.labels && gpu.labels['workload-type'] == 'training') ||
+          (size(gpu.runningApps) == 0)
+        )
+      priority: 50
+
+  # Optional: AutoScaling configuration
+  autoScaling:
+    autoSetLimits:
+      enable: true
+      targetResource: "all"
+      evaluationPeriod: "5m"
+      extraTFlopsBufferRatio: "0.1"
+
+---
+apiVersion: tensor-fusion.ai/v1
+kind: SchedulingConfigTemplate
+metadata:
+  name: simple-cel-example
+spec:
+  placement:
+    mode: LowLoadFirst
+    celFilters:
+    # Simple example: only use GPUs with more than 50% TFlops available
+    - name: "high-availability"
+      expression: "gpu.available.tflops > gpu.capacity.tflops * 0.5"
+      priority: 100

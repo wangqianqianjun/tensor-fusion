@@ -18,6 +18,7 @@ import (
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/gpuallocator/filter"
+	cel_filter "github.com/NexusGPU/tensor-fusion/internal/gpuallocator/filter/cel_filter"
 	"github.com/NexusGPU/tensor-fusion/internal/metrics"
 	"github.com/NexusGPU/tensor-fusion/internal/quota"
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
@@ -171,6 +172,17 @@ func (s *GpuAllocator) Filter(
 	// Add NodeAffinityFilter if specified
 	if req.NodeAffinity != nil {
 		filterRegistry = filterRegistry.With(filter.NewNodeAffinityFilter(s.Client, req.NodeAffinity))
+	}
+
+	// Add CEL filters from SchedulingConfigTemplate if available
+	celConfigManager := cel_filter.NewCELConfigManager(s.Client)
+	celFilters, err := celConfigManager.GetCELFiltersForPool(s.ctx, req.PoolName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get CEL filters: %w", err)
+	}
+	if len(celFilters) > 0 {
+		celFilterAdapters := cel_filter.CreateCELFilterAdapters(celFilters)
+		filterRegistry = filterRegistry.With(celFilterAdapters...)
 	}
 
 	// Apply the filters in sequence
