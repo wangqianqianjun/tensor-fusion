@@ -203,41 +203,6 @@ spec:
                   allowUsingLocalGPU:
                     default: true
                     type: boolean
-                  celFilters:
-                    description: CEL-based GPU filters for advanced filtering logic
-                    items:
-                      description: |-
-                        CELFilterConfig defines the configuration for CEL-based filtering
-
-                        example:
-                        ```yaml
-                          - name: "avoid-overloaded-gpus"
-                            expression: "gpu.available.tflops > 0.5 && size(gpu.runningApps) < 3"
-                            priority: 100
-                          - name: "prefer-specific-model"
-                            expression: "gpu.gpuModel.startsWith('NVIDIA') && gpu.labels.has('gpu-tier') && gpu.labels['gpu-tier'] == 'premium'"
-                            priority: 50
-
-                        ```
-                      properties:
-                        expression:
-                          description: |-
-                            CEL expression for filtering GPUs
-                            The expression should return a boolean value
-                            Available variables: gpu, workerPodKey, request
-                          type: string
-                        name:
-                          description: Name for this filter (for debugging/logging)
-                          type: string
-                        priority:
-                          default: 0
-                          description: Priority for this filter (higher priority filters
-                            run first)
-                          type: integer
-                      required:
-                      - expression
-                      type: object
-                    type: array
                   gpuFilters:
                     items:
                       description: "GPUFilter is to select eligible GPUs for scheduling.\n\nexample:\n```yaml\n-

@@ -42,3 +42,12 @@ const (
 	PodKeyFieldName      = "name"
 	PodKeyFieldNamespace = "namespace"
 )
+
+// Request object field names
+const (
+	RequestFieldWorkerPodKey = "workerPodKey"
+	RequestFieldCount        = "count"
+	RequestFieldGPUModel     = "gpuModel"
+	RequestFieldRequest      = "request"
+	RequestFieldLimit        = "limit"
+)

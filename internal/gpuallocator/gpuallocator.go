@@ -166,7 +166,65 @@ func (s *GpuAllocator) Filter(
 	toFilterGPUs []*tfv1.GPU,
 	isSimulateSchedule bool,
 ) ([]*tfv1.GPU, []filter.FilterDetail, error) {
+
+	// Check if CEL filtering is enabled via config/flag
+	useCELFilter := config.GetGlobalConfig().EnableCELFilter
+
+	if useCELFilter {
+		// New CEL-based filtering approach
+		return s.applyCELFilter(req, toFilterGPUs, isSimulateSchedule)
+	} else {
+		// Legacy filter approach (for rollback support)
+		return s.applyLegacyFilters(req, toFilterGPUs, isSimulateSchedule)
+	}
+}
+
+// applyCELFilter applies the new CEL-based filtering
+func (s *GpuAllocator) applyCELFilter(
+	req *tfv1.AllocRequest,
+	toFilterGPUs []*tfv1.GPU,
+	isSimulateSchedule bool,
+) ([]*tfv1.GPU, []filter.FilterDetail, error) {
+	// Create CEL filter from AllocRequest
+	cache, err := cel_filter.NewExpressionCache(100, 5*time.Minute)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create CEL cache: %w", err)
+	}
+
+	allocCELFilter, err := cel_filter.NewAllocRequestCELFilter(req, cache)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create AllocRequest CEL filter: %w", err)
+	}
+
+	// Start with base registry and add CEL filter
+	filterRegistry := s.filterRegistry.With(allocCELFilter)
+
 	// Add SameNodeFilter if count > 1 to ensure GPUs are from the same node
+	if req.Count > 1 {
+		filterRegistry = filterRegistry.With(filter.NewSameNodeFilter(req.Count))
+	}
+
+	// Add NodeAffinityFilter if specified
+	if req.NodeAffinity != nil {
+		filterRegistry = filterRegistry.With(filter.NewNodeAffinityFilter(s.Client, req.NodeAffinity))
+	}
+
+	// Apply the filters
+	filteredGPUs, filterDetails, err := filterRegistry.Apply(s.ctx, req.WorkloadNameNamespace, toFilterGPUs, isSimulateSchedule)
+	if err != nil {
+		return nil, nil, fmt.Errorf("apply CEL filters: %w", err)
+	}
+
+	return filteredGPUs, filterDetails, nil
+}
+
+// applyLegacyFilters applies the legacy filter approach (for rollback support)
+func (s *GpuAllocator) applyLegacyFilters(
+	req *tfv1.AllocRequest,
+	toFilterGPUs []*tfv1.GPU,
+	isSimulateSchedule bool,
+) ([]*tfv1.GPU, []filter.FilterDetail, error) {
+	// Legacy filtering approach
 	filterRegistry := s.filterRegistry.With(filter.NewResourceFilter(req.Request))
 
 	// Add GPU model filter if specified
@@ -177,26 +235,16 @@ func (s *GpuAllocator) Filter(
 	if req.Count > 1 {
 		filterRegistry = filterRegistry.With(filter.NewSameNodeFilter(req.Count))
 	}
+
 	// Add NodeAffinityFilter if specified
 	if req.NodeAffinity != nil {
 		filterRegistry = filterRegistry.With(filter.NewNodeAffinityFilter(s.Client, req.NodeAffinity))
 	}
 
-	// Add CEL filters from SchedulingConfigTemplate if available
-	celConfigManager := cel_filter.NewCELConfigManager(s.Client)
-	celFilters, err := celConfigManager.GetCELFiltersForPool(s.ctx, req.PoolName)
-	if err != nil {
-		return nil, nil, fmt.Errorf("get CEL filters: %w", err)
-	}
-	if len(celFilters) > 0 {
-		celFilterAdapters := cel_filter.CreateCELFilterAdapters(celFilters)
-		filterRegistry = filterRegistry.With(celFilterAdapters...)
-	}
-
-	// Apply the filters in sequence
+	// Apply the legacy filters
 	filteredGPUs, filterDetails, err := filterRegistry.Apply(s.ctx, req.WorkloadNameNamespace, toFilterGPUs, isSimulateSchedule)
 	if err != nil {
-		return nil, nil, fmt.Errorf("apply filters: %w", err)
+		return nil, nil, fmt.Errorf("apply legacy filters: %w", err)
 	}
 
 	return filteredGPUs, filterDetails, nil
@@ -338,6 +386,7 @@ func (s *GpuAllocator) CheckQuotaAndFilter(ctx context.Context, req *tfv1.AllocR
 		return nil, nil, fmt.Errorf("no gpu devices in pool %s", req.PoolName)
 	}
 	filteredGPUs, filterDetails, err := s.Filter(req, poolGPUs, isSimulateSchedule)
+
 	if err != nil {
 		return nil, nil, err
 	}

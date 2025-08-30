@@ -30,45 +30,8 @@ type CELFilter struct {
 	mu         sync.RWMutex
 }
 
-// NewCELFilter creates a new CEL-based GPU filter
-func NewCELFilter(config CELFilterConfig) (*CELFilter, error) {
-	env, err := createCELEnvironment()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CEL environment: %w", err)
-	}
-
-	ast, issues := env.Compile(config.Expression)
-	if issues != nil && issues.Err() != nil {
-		return nil, fmt.Errorf("failed to compile CEL expression %q: %w", config.Expression, issues.Err())
-	}
-
-	program, err := env.Program(ast)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CEL program: %w", err)
-	}
-
-	name := config.Name
-	if name == "" {
-		name = fmt.Sprintf("CELFilter-%d", config.Priority)
-	}
-
-	return &CELFilter{
-		name:       name,
-		expression: config.Expression,
-		program:    program,
-		env:        env,
-	}, nil
-}
-
-// Name returns the name of this filter
-func (f *CELFilter) Name() string {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return f.name
-}
-
 // Filter applies the CEL expression to filter GPUs
-func (f *CELFilter) Filter(ctx context.Context, workerPodKey tfv1.NameNamespace, gpus []tfv1.GPU) ([]tfv1.GPU, error) {
+func (f *CELFilter) Filter(ctx context.Context, workerPodKey tfv1.NameNamespace, gpus []*tfv1.GPU) ([]*tfv1.GPU, error) {
 	log := log.FromContext(ctx)
 	if len(gpus) == 0 {
 		return gpus, nil
@@ -79,11 +42,11 @@ func (f *CELFilter) Filter(ctx context.Context, workerPodKey tfv1.NameNamespace,
 	expression := f.expression
 	f.mu.RUnlock()
 
-	var filteredGPUs []tfv1.GPU
+	var filteredGPUs []*tfv1.GPU
 
 	for _, gpu := range gpus {
 		// Create variables for CEL evaluation
-		vars := createCELVariables(gpu, workerPodKey)
+		vars := createCELVariables(*gpu, workerPodKey)
 
 		// Evaluate the CEL expression
 		result, _, err := program.Eval(vars)
@@ -147,7 +110,7 @@ func createCELEnvironment() (*cel.Env, error) {
 		cel.Variable(CELVarGPU, cel.MapType(cel.StringType, cel.DynType)),
 		// Define worker pod key
 		cel.Variable(CELVarWorkerPodKey, cel.MapType(cel.StringType, cel.StringType)),
-		// Define request information (if needed in future)
+		// Define request object structure
 		cel.Variable(CELVarRequest, cel.MapType(cel.StringType, cel.DynType)),
 	)
 }
@@ -208,6 +171,5 @@ func createCELVariables(gpu tfv1.GPU, workerPodKey tfv1.NameNamespace) map[strin
 	return map[string]interface{}{
 		CELVarGPU:          gpuMap,
 		CELVarWorkerPodKey: workerPodKeyMap,
-		CELVarRequest:      map[string]interface{}{}, // Placeholder for future request info
 	}
 }

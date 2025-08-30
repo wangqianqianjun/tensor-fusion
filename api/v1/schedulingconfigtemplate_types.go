@@ -51,10 +51,6 @@ type PlacementConfig struct {
 
 	// +optional
 	GPUFilters []GPUFilter `json:"gpuFilters,omitempty"`
-
-	// CEL-based GPU filters for advanced filtering logic
-	// +optional
-	CELFilters []CELFilterConfig `json:"celFilters,omitempty"`
 }
 
 // +kubebuilder:validation:Enum=CompactFirst;LowLoadFirst
@@ -87,34 +83,6 @@ const (
 type GPUFilter struct {
 	Type   string               `json:"type,omitempty"`
 	Params runtime.RawExtension `json:"params,omitempty"`
-}
-
-// CELFilterConfig defines the configuration for CEL-based filtering
-//
-// example:
-// ```yaml
-//   - name: "avoid-overloaded-gpus"
-//     expression: "gpu.available.tflops > 0.5 && size(gpu.runningApps) < 3"
-//     priority: 100
-//   - name: "prefer-specific-model"
-//     expression: "gpu.gpuModel.startsWith('NVIDIA') && gpu.labels.has('gpu-tier') && gpu.labels['gpu-tier'] == 'premium'"
-//     priority: 50
-//
-// ```
-type CELFilterConfig struct {
-	// Name for this filter (for debugging/logging)
-	// +optional
-	Name string `json:"name,omitempty"`
-
-	// CEL expression for filtering GPUs
-	// The expression should return a boolean value
-	// Available variables: gpu, workerPodKey, request
-	Expression string `json:"expression"`
-
-	// Priority for this filter (higher priority filters run first)
-	// +kubebuilder:default=0
-	// +optional
-	Priority int `json:"priority,omitempty"`
 }
 
 type AutoScalingConfig struct {

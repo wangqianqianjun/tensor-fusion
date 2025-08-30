@@ -8,6 +8,9 @@ type GlobalConfig struct {
 	MetricsExtraPodLabels map[string]string `yaml:"metricsExtraPodLabels"`
 
 	AlertRules []AlertRule `yaml:"alertRules"`
+
+	// EnableCELFilter enables CEL-based filtering (default: false for rollback support)
+	EnableCELFilter bool `yaml:"enableCELFilter"`
 }
 
 var globalConfig *GlobalConfig
@@ -41,6 +44,7 @@ func MockGlobalConfig() *GlobalConfig {
 		MetricsTTL:            "30d",
 		MetricsFormat:         "influx",
 		MetricsExtraPodLabels: map[string]string{"kubernetes.io/app": "app"},
+		EnableCELFilter:       false, // Default to legacy filter for rollback support
 		AlertRules: []AlertRule{
 			{
 				Name:               "mock",
