@@ -168,14 +168,14 @@ func (s *GpuAllocator) Filter(
 ) ([]*tfv1.GPU, []filter.FilterDetail, error) {
 
 	// Check if CEL filtering is enabled via config/flag
-	useCELFilter := config.GetGlobalConfig().EnableCELFilter
+	disableCELFilter := req.DisableCELFilter
 
-	if useCELFilter {
-		// New CEL-based filtering approach
-		return s.applyCELFilter(req, toFilterGPUs, isSimulateSchedule)
-	} else {
-		// Legacy filter approach (for rollback support)
+	if disableCELFilter {
+		// Legacy filter approach
 		return s.applyLegacyFilters(req, toFilterGPUs, isSimulateSchedule)
+	} else {
+		// CEL filter approach
+		return s.applyCELFilter(req, toFilterGPUs, isSimulateSchedule)
 	}
 }
 
@@ -191,7 +191,7 @@ func (s *GpuAllocator) applyCELFilter(
 		return nil, nil, fmt.Errorf("failed to create CEL cache: %w", err)
 	}
 
-	allocCELFilter, err := cel_filter.NewAllocRequestCELFilter(req, cache)
+	allocCELFilter, err := cel_filter.NewCELFilter(req, cache)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create AllocRequest CEL filter: %w", err)
 	}
@@ -1339,10 +1339,23 @@ func (s *GpuAllocator) ComposeAllocationRequest(pod *v1.Pod) (*tfv1.AllocRequest
 		return &tfv1.AllocRequest{}, "gpu count annotation is too large", nil
 	}
 
+	disableCELFilter := false
+	if disabledFeatures, exists := pod.Annotations[constants.DisableFeaturesAnnotation]; exists {
+		disabledFeaturesList := strings.Split(disabledFeatures, ",")
+		for _, feature := range disabledFeaturesList {
+			if feature == constants.BuiltInFeatureCELFilter {
+				disableCELFilter = true
+			}
+		}
+	}
+
 	allocRequest := tfv1.AllocRequest{
 		PoolName: pod.Annotations[constants.GpuPoolKey],
 		Request:  gpuRequestResource,
 		Limit:    gpuLimitResource,
+
+		DisableCELFilter:    disableCELFilter,
+		CELFilterExpression: pod.Annotations[constants.CELFilterExpressionAnnotation],
 
 		Count:    uint(count),
 		GPUModel: pod.Annotations[constants.GPUModelAnnotation],

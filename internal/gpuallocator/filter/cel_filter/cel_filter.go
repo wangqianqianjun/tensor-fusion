@@ -3,7 +3,7 @@ package cel_filter
 import (
 	"context"
 	"fmt"
-	"sync"
+	"time"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
 	"github.com/google/cel-go/cel"
@@ -11,96 +11,157 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// CELFilterConfig defines the configuration for CEL-based filtering
-type CELFilterConfig struct {
-	// CEL expression for filtering GPUs
-	Expression string `json:"expression"`
-	// Priority for this filter (higher priority filters run first)
-	Priority int `json:"priority"`
-	// Name for this filter (for debugging/logging)
-	Name string `json:"name"`
-}
-
-// CELFilter implements GPU filtering using CEL expressions
+// AllocRequestCELFilter converts AllocRequest to CEL filter and executes it
 type CELFilter struct {
-	name       string
+	cache      *ExpressionCache
 	expression string
-	program    cel.Program
-	env        *cel.Env
-	mu         sync.RWMutex
+	name       string
 }
 
-// Filter applies the CEL expression to filter GPUs
+// NewAllocRequestCELFilter creates a new CEL filter from allocation request
+func NewCELFilter(req *tfv1.AllocRequest, cache *ExpressionCache) (*CELFilter, error) {
+	// Convert AllocRequest to CEL expression
+	expression, err := convertAllocRequestToCEL(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert AllocRequest to CEL: %w", err)
+	}
+
+	// Handle nil request case
+	name := "AllocRequest-unknown"
+	if req != nil {
+		name = fmt.Sprintf("AllocRequest-%s", req.WorkloadNameNamespace.String())
+	}
+
+	return &CELFilter{
+		cache:      cache,
+		expression: expression,
+		name:       name,
+	}, nil
+}
+
+// Name returns the filter name
+func (f *CELFilter) Name() string {
+	return f.name
+}
+
+// Filter applies the CEL expression derived from AllocRequest to filter GPUs
 func (f *CELFilter) Filter(ctx context.Context, workerPodKey tfv1.NameNamespace, gpus []*tfv1.GPU) ([]*tfv1.GPU, error) {
 	log := log.FromContext(ctx)
 	if len(gpus) == 0 {
 		return gpus, nil
 	}
 
-	f.mu.RLock()
-	program := f.program
-	expression := f.expression
-	f.mu.RUnlock()
+	if f.expression == "" {
+		// If no expression, return all GPUs (no filtering needed)
+		return gpus, nil
+	}
+
+	// Get compiled program from cache
+	program, err := f.cache.GetOrCompileProgram(f.expression)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CEL program for expression %q: %w", f.expression, err)
+	}
 
 	var filteredGPUs []*tfv1.GPU
 
 	for _, gpu := range gpus {
+		// Create timeout context for CEL evaluation
+		evalCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+
 		// Create variables for CEL evaluation
 		vars := createCELVariables(*gpu, workerPodKey)
 
-		// Evaluate the CEL expression
-		result, _, err := program.Eval(vars)
-		if err != nil {
-			log.Error(err, "CEL expression evaluation failed",
-				"expression", expression,
-				"gpu", gpu.Name,
-				"workerPodKey", workerPodKey)
-			// On error, exclude the GPU (fail-safe)
-			continue
-		}
+		// Evaluate with timeout
+		resultChan := make(chan evalResult, 1)
+		go func() {
+			result, _, evalErr := program.Eval(vars)
+			resultChan <- evalResult{result: result, err: evalErr}
+		}()
 
-		// Convert result to boolean
-		if boolResult, ok := result.(types.Bool); ok {
-			if bool(boolResult) {
-				filteredGPUs = append(filteredGPUs, gpu)
+		select {
+		case evalRes := <-resultChan:
+			cancel()
+			if evalRes.err != nil {
+				log.Error(evalRes.err, "CEL expression evaluation failed",
+					"expression", f.expression,
+					"gpu", gpu.Name,
+					"workerPodKey", workerPodKey)
+				// On error, exclude the GPU (fail-safe)
+				continue
 			}
-		} else {
-			log.Error(nil, "CEL expression did not return boolean",
-				"expression", expression,
-				"result", result,
-				"gpu", gpu.Name)
-			// On non-boolean result, exclude the GPU (fail-safe)
+
+			// Convert result to boolean
+			if boolResult, ok := evalRes.result.(types.Bool); ok {
+				if bool(boolResult) {
+					filteredGPUs = append(filteredGPUs, gpu)
+				}
+			} else {
+				log.Error(nil, "CEL expression did not return boolean",
+					"expression", f.expression,
+					"result", evalRes.result,
+					"gpu", gpu.Name)
+				// On non-boolean result, exclude the GPU (fail-safe)
+				continue
+			}
+		case <-evalCtx.Done():
+			cancel()
+			// Timeout - skip this GPU (fail-safe behavior)
+			log.V(1).Info("CEL evaluation timeout", "gpu", gpu.Name, "expression", f.expression)
 			continue
 		}
 	}
 
-	log.V(1).Info("CEL filter applied",
+	log.V(1).Info("AllocRequest CEL filter applied",
 		"filter", f.name,
-		"expression", expression,
+		"expression", f.expression,
 		"inputGPUs", len(gpus),
 		"outputGPUs", len(filteredGPUs))
 
 	return filteredGPUs, nil
 }
 
-// UpdateExpression updates the CEL expression (thread-safe)
-func (f *CELFilter) UpdateExpression(newExpression string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+type evalResult struct {
+	result interface{}
+	err    error
+}
 
-	ast, issues := f.env.Compile(newExpression)
-	if issues != nil && issues.Err() != nil {
-		return fmt.Errorf("failed to compile new CEL expression %q: %w", newExpression, issues.Err())
+// convertAllocRequestToCEL converts an allocation request to a CEL expression
+func convertAllocRequestToCEL(req *tfv1.AllocRequest) (string, error) {
+	if req == nil {
+		return "", nil
 	}
 
-	program, err := f.env.Program(ast)
-	if err != nil {
-		return fmt.Errorf("failed to create new CEL program: %w", err)
+	var conditions []string
+
+	// Add custom CEL expression if provided by user
+	if req.CELFilterExpression != "" {
+		conditions = append(conditions, req.CELFilterExpression)
 	}
 
-	f.expression = newExpression
-	f.program = program
-	return nil
+	// Add GPU phase condition (must be Ready)
+	conditions = append(conditions, "gpu.phase == 'Ready'")
+
+	// Add GPU model filter if specified
+	if req.GPUModel != "" {
+		conditions = append(conditions, fmt.Sprintf("gpu.gpuModel == '%s'", req.GPUModel))
+	}
+
+	// If no conditions, return empty expression (no filtering)
+	if len(conditions) == 0 {
+		return "", nil
+	}
+
+	// Combine all conditions with AND
+	if len(conditions) == 1 {
+		return conditions[0], nil
+	}
+
+	expression := conditions[0]
+	for i := 1; i < len(conditions); i++ {
+		expression += " && " + conditions[i]
+	}
+
+	return expression, nil
 }
 
 // createCELEnvironment creates a CEL environment with GPU-related variables and functions
@@ -128,14 +189,6 @@ func createCELVariables(gpu tfv1.GPU, workerPodKey tfv1.NameNamespace) map[strin
 		GPUFieldMessage:     gpu.Status.Message,
 		GPUFieldLabels:      gpu.Labels,
 		GPUFieldAnnotations: gpu.Annotations,
-	}
-
-	// Add capacity information if available
-	if gpu.Status.Capacity != nil {
-		gpuMap[GPUFieldCapacity] = map[string]interface{}{
-			ResourceFieldTFlops: gpu.Status.Capacity.Tflops.AsApproximateFloat64(),
-			ResourceFieldVRAM:   gpu.Status.Capacity.Vram.AsApproximateFloat64(),
-		}
 	}
 
 	// Add available information if available

@@ -24,7 +24,6 @@ const (
 	GPUFieldAnnotations = "annotations"
 
 	// Resource information
-	GPUFieldCapacity     = "capacity"
 	GPUFieldAvailable    = "available"
 	GPUFieldNodeSelector = "nodeSelector"
 	GPUFieldRunningApps  = "runningApps"
