@@ -179,6 +179,8 @@ type AllocRequest struct {
 	GPUModel string
 	// Node affinity requirements
 	NodeAffinity *v1.NodeAffinity
+	// Whether this request requires dedicated GPU access (ignores resource limits)
+	DedicatedGPU bool
 
 	// final scheduled GPU IDs for this allocation request
 	// This fields is set by GPUAllocator, user should not choose specific GPUs
