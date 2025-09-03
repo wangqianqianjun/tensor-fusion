@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
+	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/pricing"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +30,7 @@ func ParseTensorFusionInfo(
 	ctx context.Context,
 	k8sClient client.Client,
 	pod *corev1.Pod,
+	pricingProvider pricing.PricingProvider,
 ) (utils.TensorFusionInfo, error) {
 	var info utils.TensorFusionInfo
 	if pod.Annotations == nil {
@@ -113,6 +115,12 @@ func ParseTensorFusionInfo(
 	gpuModel, ok := pod.Annotations[constants.GPUModelAnnotation]
 	if ok {
 		workloadProfile.Spec.GPUModel = gpuModel
+	}
+
+	// Handle dedicated GPU logic
+	err = handleDedicatedGPU(pod, workloadProfile, pricingProvider)
+	if err != nil {
+		return info, fmt.Errorf("handle dedicated GPU: %w", err)
 	}
 
 	info.Profile = &workloadProfile.Spec
@@ -226,4 +234,31 @@ func setDefaultQuotasIfExists(workloadProfile *tfv1.WorkloadProfile, single tfv1
 			workloadProfile.Spec.Resources.Limits.Vram = defaultLimit.Vram
 		}
 	}
+}
+
+// handleDedicatedGPU handles dedicated GPU annotation by setting full GPU capacity
+func handleDedicatedGPU(pod *corev1.Pod, workloadProfile *tfv1.WorkloadProfile, pricingProvider pricing.PricingProvider) error {
+	dedicatedGPU, ok := pod.Annotations[constants.DedicatedGPUAnnotation]
+	if !ok || dedicatedGPU != constants.TrueStringValue {
+		return nil // Not a dedicated GPU request
+	}
+
+	// Must have GPU model specified for dedicated GPU
+	if workloadProfile.Spec.GPUModel == "" {
+		return fmt.Errorf("dedicated GPU requires gpu-model annotation to be specified")
+	}
+
+	// Get full GPU capacity from pricing provider
+	tflops, vram, found := pricingProvider.GetGPUCapacityByModel(workloadProfile.Spec.GPUModel)
+	if !found {
+		return fmt.Errorf("could not find capacity information for GPU model: %s", workloadProfile.Spec.GPUModel)
+	}
+
+	// Set full capacity for both requests and limits
+	workloadProfile.Spec.Resources.Requests.Tflops = tflops
+	workloadProfile.Spec.Resources.Requests.Vram = vram
+	workloadProfile.Spec.Resources.Limits.Tflops = tflops
+	workloadProfile.Spec.Resources.Limits.Vram = vram
+
+	return nil
 }

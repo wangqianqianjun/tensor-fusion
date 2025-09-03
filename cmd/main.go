@@ -217,7 +217,9 @@ func main() {
 	// Initialize GPU allocator and set up watches
 	allocator, portAllocator := startTensorFusionAllocators(ctx, mgr)
 
-	startWebhook(mgr, portAllocator)
+	// Create pricing provider for webhook
+	pricingProvider := pricing.NewStaticPricingProvider()
+	startWebhook(mgr, portAllocator, pricingProvider)
 
 	scheduler := startScheduler(ctx, allocator, mgr)
 
@@ -441,11 +443,15 @@ func startCustomResourceController(
 	}
 }
 
-func startWebhook(mgr manager.Manager, portAllocator *portallocator.PortAllocator) {
+func startWebhook(
+	mgr manager.Manager,
+	portAllocator *portallocator.PortAllocator,
+	pricingProvider pricing.PricingProvider,
+) {
 	if os.Getenv(constants.EnableWebhookEnv) == constants.FalseStringValue {
 		return
 	}
-	if err := webhookcorev1.SetupPodWebhookWithManager(mgr, portAllocator); err != nil {
+	if err := webhookcorev1.SetupPodWebhookWithManager(mgr, portAllocator, pricingProvider); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "Pod")
 		os.Exit(1)
 	}

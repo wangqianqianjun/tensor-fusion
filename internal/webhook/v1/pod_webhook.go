@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
+	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/pricing"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	"github.com/NexusGPU/tensor-fusion/internal/portallocator"
 	"github.com/NexusGPU/tensor-fusion/internal/utils"
@@ -46,24 +47,26 @@ import (
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 // SetupPodWebhookWithManager registers the webhook for Pod in the manager.
-func SetupPodWebhookWithManager(mgr ctrl.Manager, portAllocator *portallocator.PortAllocator) error {
+func SetupPodWebhookWithManager(mgr ctrl.Manager, portAllocator *portallocator.PortAllocator, pricingProvider pricing.PricingProvider) error {
 	webhookServer := mgr.GetWebhookServer()
 
 	webhookServer.Register("/mutate-v1-pod",
 		&admission.Webhook{
 			Handler: &TensorFusionPodMutator{
-				decoder:       admission.NewDecoder(runtime.NewScheme()),
-				Client:        mgr.GetClient(),
-				portAllocator: portAllocator,
+				decoder:         admission.NewDecoder(runtime.NewScheme()),
+				Client:          mgr.GetClient(),
+				portAllocator:   portAllocator,
+				pricingProvider: pricingProvider,
 			},
 		})
 	return nil
 }
 
 type TensorFusionPodMutator struct {
-	Client        client.Client
-	decoder       admission.Decoder
-	portAllocator *portallocator.PortAllocator
+	Client          client.Client
+	decoder         admission.Decoder
+	portAllocator   *portallocator.PortAllocator
+	pricingProvider pricing.PricingProvider
 }
 
 // Handle implements admission.Handler interface.
@@ -100,7 +103,7 @@ func (m *TensorFusionPodMutator) Handle(ctx context.Context, req admission.Reque
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("failed to marshal current pod: %w", err))
 	}
 
-	tfInfo, err := ParseTensorFusionInfo(ctx, m.Client, pod)
+	tfInfo, err := ParseTensorFusionInfo(ctx, m.Client, pod, m.pricingProvider)
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, fmt.Errorf("parse tf resources: %w", err))
 	}

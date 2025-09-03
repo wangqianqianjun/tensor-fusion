@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	tfv1 "github.com/NexusGPU/tensor-fusion/api/v1"
+	"github.com/NexusGPU/tensor-fusion/internal/cloudprovider/pricing"
 	"github.com/NexusGPU/tensor-fusion/internal/config"
 	"github.com/NexusGPU/tensor-fusion/internal/constants"
 	. "github.com/onsi/ginkgo/v2"
@@ -532,7 +533,9 @@ var _ = Describe("TensorFusionPodMutator", func() {
 					},
 				},
 			}
-			tfInfo, err := ParseTensorFusionInfo(ctx, k8sClient, pod)
+			// Create a mock pricing provider for testing
+			mockPricingProvider := &pricing.StaticPricingProvider{}
+			tfInfo, err := ParseTensorFusionInfo(ctx, k8sClient, pod, mockPricingProvider)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tfInfo.ContainerNames).To(HaveLen(1))
 			Expect(tfInfo.ContainerNames[0]).To(Equal("test-container"))

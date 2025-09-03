@@ -165,15 +165,8 @@ func (s *GpuAllocator) Filter(
 	toFilterGPUs []*tfv1.GPU,
 	isSimulateSchedule bool,
 ) ([]*tfv1.GPU, []filter.FilterDetail, error) {
-	filterRegistry := s.filterRegistry
-
-	// For dedicated GPU, skip resource filter and add dedicated GPU filter
-	if req.DedicatedGPU {
-		filterRegistry = filterRegistry.With(filter.NewDedicatedGPUFilter())
-	} else {
-		// For normal requests, add resource filter
-		filterRegistry = filterRegistry.With(filter.NewResourceFilter(req.Request))
-	}
+	// Add SameNodeFilter if count > 1 to ensure GPUs are from the same node
+	filterRegistry := s.filterRegistry.With(filter.NewResourceFilter(req.Request))
 
 	// Add GPU model filter if specified
 	if req.GPUModel != "" {
@@ -260,15 +253,9 @@ func (s *GpuAllocator) Bind(
 		}
 
 		// reduce available resource on the GPU status
-		if req.DedicatedGPU {
-			// For dedicated GPU, allocate entire GPU capacity
-			gpu.Status.Available.Tflops = resource.MustParse("0")
-			gpu.Status.Available.Vram = resource.MustParse("0")
-		} else {
-			// Normal resource allocation
-			gpu.Status.Available.Tflops.Sub(req.Request.Tflops)
-			gpu.Status.Available.Vram.Sub(req.Request.Vram)
-		}
+
+		gpu.Status.Available.Tflops.Sub(req.Request.Tflops)
+		gpu.Status.Available.Vram.Sub(req.Request.Vram)
 
 		addRunningApp(s.ctx, gpu, req.WorkloadNameNamespace)
 
@@ -432,15 +419,8 @@ func (s *GpuAllocator) Dealloc(
 		}
 
 		// Add resources back to the GPU
-		if request.DedicatedGPU {
-			// For dedicated GPU, restore GPU's complete capacity
-			storeGPU.Status.Available.Tflops = storeGPU.Status.Capacity.Tflops.DeepCopy()
-			storeGPU.Status.Available.Vram = storeGPU.Status.Capacity.Vram.DeepCopy()
-		} else {
-			// Normal resource recovery
-			storeGPU.Status.Available.Tflops.Add(request.Request.Tflops)
-			storeGPU.Status.Available.Vram.Add(request.Request.Vram)
-		}
+		storeGPU.Status.Available.Tflops.Add(request.Request.Tflops)
+		storeGPU.Status.Available.Vram.Add(request.Request.Vram)
 
 		if nodeName == "" {
 			nodeName = storeGPU.Status.NodeSelector[constants.KubernetesHostNameLabel]
@@ -1318,13 +1298,6 @@ func (s *GpuAllocator) ComposeAllocationRequest(pod *v1.Pod) (*tfv1.AllocRequest
 		gpuIds := strings.SplitSeq(gpuIdStr, ",")
 		allocRequest.GPUNames = slices.Collect(gpuIds)
 	}
-
-	// parse dedicated GPU annotation
-	dedicatedGPU := false
-	if dedicatedStr, exists := pod.Annotations[constants.DedicatedGPUAnnotation]; exists {
-		dedicatedGPU = dedicatedStr == "true"
-	}
-	allocRequest.DedicatedGPU = dedicatedGPU
 
 	return &allocRequest, "", nil
 }
