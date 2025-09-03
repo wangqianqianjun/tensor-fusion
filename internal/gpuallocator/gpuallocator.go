@@ -253,7 +253,6 @@ func (s *GpuAllocator) Bind(
 		}
 
 		// reduce available resource on the GPU status
-
 		gpu.Status.Available.Tflops.Sub(req.Request.Tflops)
 		gpu.Status.Available.Vram.Sub(req.Request.Vram)
 

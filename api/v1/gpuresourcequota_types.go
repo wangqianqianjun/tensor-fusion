@@ -179,6 +179,7 @@ type AllocRequest struct {
 	GPUModel string
 	// Node affinity requirements
 	NodeAffinity *v1.NodeAffinity
+
 	// final scheduled GPU IDs for this allocation request
 	// This fields is set by GPUAllocator, user should not choose specific GPUs
 	GPUNames []string
