@@ -187,19 +187,37 @@ func SetPoolMetrics(poolObj *tfv1.GPUPool) {
 	}
 
 	if poolObj.Status.VirtualAvailableTFlops != nil && poolObj.Status.VirtualAvailableVRAM != nil {
-		poolMetricsMap[poolObj.Name].AllocatedVramPercentToVirtualCap = poolMetricsMap[poolObj.Name].AllocatedVramBytes /
-			poolObj.Status.VirtualVRAM.AsApproximateFloat64() * 100
+		virtualVRAM := poolObj.Status.VirtualVRAM.AsApproximateFloat64()
+		virtualTFlops := poolObj.Status.VirtualTFlops.AsApproximateFloat64()
 
-		poolMetricsMap[poolObj.Name].AllocatedTflopsPercentToVirtualCap = poolMetricsMap[poolObj.Name].AllocatedTflops /
-			poolObj.Status.VirtualTFlops.AsApproximateFloat64() * 100
-		poolMetricsMap[poolObj.Name].AssignedLimitedTFlops = poolObj.Status.VirtualTFlops.AsApproximateFloat64() -
+		if virtualVRAM > 0 {
+			poolMetricsMap[poolObj.Name].AllocatedVramPercentToVirtualCap = poolMetricsMap[poolObj.Name].AllocatedVramBytes / virtualVRAM * 100
+		} else {
+			poolMetricsMap[poolObj.Name].AllocatedVramPercentToVirtualCap = 0
+		}
+
+		if virtualTFlops > 0 {
+			poolMetricsMap[poolObj.Name].AllocatedTflopsPercentToVirtualCap = poolMetricsMap[poolObj.Name].AllocatedTflops / virtualTFlops * 100
+		} else {
+			poolMetricsMap[poolObj.Name].AllocatedTflopsPercentToVirtualCap = 0
+		}
+
+		poolMetricsMap[poolObj.Name].AssignedLimitedTFlops = virtualTFlops -
 			poolObj.Status.VirtualAvailableTFlops.AsApproximateFloat64()
-		poolMetricsMap[poolObj.Name].AssignedLimitedVramBytes = poolObj.Status.VirtualVRAM.AsApproximateFloat64() -
+		poolMetricsMap[poolObj.Name].AssignedLimitedVramBytes = virtualVRAM -
 			poolObj.Status.VirtualAvailableVRAM.AsApproximateFloat64()
-		poolMetricsMap[poolObj.Name].AssignedLimitedTFlopsPercentToVirtualCap = poolMetricsMap[poolObj.Name].AssignedLimitedTFlops /
-			poolObj.Status.VirtualTFlops.AsApproximateFloat64() * 100
-		poolMetricsMap[poolObj.Name].AssignedLimitedVramPercentToVirtualCap = poolMetricsMap[poolObj.Name].AssignedLimitedVramBytes /
-			poolObj.Status.VirtualVRAM.AsApproximateFloat64() * 100
+
+		if virtualTFlops > 0 {
+			poolMetricsMap[poolObj.Name].AssignedLimitedTFlopsPercentToVirtualCap = poolMetricsMap[poolObj.Name].AssignedLimitedTFlops / virtualTFlops * 100
+		} else {
+			poolMetricsMap[poolObj.Name].AssignedLimitedTFlopsPercentToVirtualCap = 0
+		}
+
+		if virtualVRAM > 0 {
+			poolMetricsMap[poolObj.Name].AssignedLimitedVramPercentToVirtualCap = poolMetricsMap[poolObj.Name].AssignedLimitedVramBytes / virtualVRAM * 100
+		} else {
+			poolMetricsMap[poolObj.Name].AssignedLimitedVramPercentToVirtualCap = 0
+		}
 	}
 	poolMetricsMap[poolObj.Name].GPUCount = int(poolObj.Status.TotalGPUs)
 }
